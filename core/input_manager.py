@@ -10,7 +10,7 @@ class InputManager:
         self._app_window = omni.appwindow.get_default_app_window()
         self._keyboard = self._app_window.get_keyboard()
         
-    def get_command(self):
+    def get_command(self,*args, **kwargs):
         """
         Return delta pos & Gripper state
         """
@@ -33,3 +33,5 @@ class InputManager:
             gripper_cmd = 1  # Open
             
         return delta, gripper_cmd
+    def is_done(self):
+        return False
