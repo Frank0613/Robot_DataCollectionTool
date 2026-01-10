@@ -122,13 +122,16 @@ class _FrankaControllerIK(_BaseFrankaController):
         local_rot_quat = local_rot_r.as_quat() 
         return local_pos, np.array([local_rot_quat[3], local_rot_quat[0], local_rot_quat[1], local_rot_quat[2]])
 
-    def apply_control(self, delta_pos, gripper_cmd):
+    def apply_control(self, delta_pos, gripper_cmd,target_quat=None):
         current_joints = self.franka.get_joint_positions()
         if current_joints is None: return
 
         # Logic specific to IK: Update internal target state
         if np.linalg.norm(delta_pos) > 0:
             self.target_pos += delta_pos
+
+        if target_quat is not None:
+            self.target_rot = target_quat
         
         # Calculate IK
         self.update_base_pose()
@@ -156,14 +159,14 @@ class _FrankaControllerRMP(_BaseFrankaController):
         super().__init__(world)
         
         # Obstacle (Only RMP needs this)
-        self.obstacle = FixedCuboid(
-            prim_path="/World/Obstacle_Pillar",
-            name="obstacle_pillar",
-            position=np.array([0.5, -1.5, 1.4]), 
-            scale=np.array([0.05, 0.5, 0.8]),    
-            color=np.array([0.8, 0.8, 0.8])     
-        )
-        self.world.scene.add(self.obstacle)
+        # self.obstacle = FixedCuboid(
+        #     prim_path="/World/Obstacle_Pillar",
+        #     name="obstacle_pillar",
+        #     position=np.array([0.5, -1.5, 1.4]), 
+        #     scale=np.array([0.05, 0.5, 0.8]),    
+        #     color=np.array([0.8, 0.8, 0.8])     
+        # )
+        # self.world.scene.add(self.obstacle)
 
         # Visualizer
         self.target_visualizer = VisualSphere(
@@ -177,7 +180,7 @@ class _FrankaControllerRMP(_BaseFrankaController):
         self.world.scene.add(self.target_visualizer)
 
         self._setup_rmpflow()
-        self._rmpflow.add_obstacle(self.obstacle)
+        #self._rmpflow.add_obstacle(self.obstacle)
         
         self._first_frame = True
         self.physics_dt = 1.0 / 60.0
@@ -197,7 +200,7 @@ class _FrankaControllerRMP(_BaseFrankaController):
         base_pos, base_rot = self.franka.get_world_pose()
         self._rmpflow.set_robot_base_pose(base_pos, base_rot)
         self._rmpflow.reset()
-        self._rmpflow.add_obstacle(self.obstacle)
+        #self._rmpflow.add_obstacle(self.obstacle)
         
         self._first_frame = True
         self.target_pos = None
@@ -206,7 +209,7 @@ class _FrankaControllerRMP(_BaseFrankaController):
         if hasattr(self, "target_visualizer"):
             self.target_visualizer.set_visibility(False)
 
-    def apply_control(self, delta_pos, gripper_cmd):
+    def apply_control(self, delta_pos, gripper_cmd,target_quat=None):
         base_pos, base_rot = self.franka.get_world_pose()
         self._rmpflow.set_robot_base_pose(base_pos, base_rot)
 
@@ -229,7 +232,7 @@ class _FrankaControllerRMP(_BaseFrankaController):
 
             self._rmpflow.set_end_effector_target(
                 target_position=self.target_pos,
-                target_orientation=None 
+                target_orientation=target_quat 
             )
             self._rmpflow.update_world()
             

@@ -14,6 +14,9 @@ USD_PATH = os.path.join(
     f"{SCENE_NAME}.usd"
 )
 
+# Target objects JSON file
+OBJECTS_JSON_PATH = os.path.join(BASE_DIR,  "target_objects", "target_objects.json")
+
 # Target robot root & End effector name
 ROBOT_PRIM_PATH = "/World/Franka_with_cam"
 TARGET_ROBOT_NAME = "Franka"
@@ -35,6 +38,6 @@ KPS_GRIPPER = 100000.0
 KDS_GRIPPER = 100.0
 
 # --- Target Cube ---
-CUBE_POSITION = np.array([0.50, 1.5, 1.3])
+CUBE_POSITION = np.array([0.4, -1.3, 1.02])
 CUBE_SCALE = np.array([0.05, 0.05, 0.05])
 CUBE_COLOR = np.array([0.0, 0.0, 1.0])
