@@ -1,11 +1,12 @@
 import argparse
 import os
+import numpy as np
 from isaacsim import SimulationApp
 simulation_app = SimulationApp({"headless": False})
 
 from omni.isaac.core import World
 from omni.isaac.core.utils.stage import open_stage, is_stage_loading
-
+from omni.isaac.core.prims import XFormPrim
 import robot_config as robot_config
 from core.input_manager import InputManager
 from core.robot_controller import FrankaController
@@ -37,7 +38,20 @@ def main():
     task_list = obj_loader.load_targets()
     current_task_idx = 0
     target_prim, target_pos_goal = obj_loader.spawn_target(world, task_list[current_task_idx])
-    
+    container_prim_path = "/World/container" 
+    container_pos = np.array([0.5, 0.5, 0.0]) # If can't find container
+
+    # Get container position
+    try:
+        container_prim = XFormPrim(container_prim_path)
+        if container_prim.is_valid():
+            container_pos, _ = container_prim.get_world_pose()
+            print(f"Container found at: {container_pos}")
+        else:
+            print(f"Container not found at {container_prim_path}, using default: {container_pos}")
+    except:
+        print("Error looking for container, using default.")
+
     world.reset()
     controller.initialize_handles()
     
@@ -48,7 +62,7 @@ def main():
     # Mode control
     start_pos, _ = controller.ee_prim.get_world_pose()
     if args.auto:
-        agent = AutoPilot(target_pos=target_pos_goal, start_pos=start_pos, target_rot=target_quat)
+        agent = AutoPilot(target_pos=target_pos_goal, start_pos=start_pos,drop_pos=container_pos, target_rot=target_quat)
     else:
         agent = InputManager()
 
@@ -87,7 +101,7 @@ def main():
                 # Reset AutoPilot
                 curr_start_pos, _ = controller.ee_prim.get_world_pose()
                 if args.auto:
-                    agent = AutoPilot(target_pos=target_pos_goal, start_pos=curr_start_pos, target_rot=target_quat)
+                    agent = AutoPilot(target_pos=target_pos_goal, start_pos=curr_start_pos,drop_pos=container_pos, target_rot=target_quat)
                 
                 needs_reset = False
                 continue
