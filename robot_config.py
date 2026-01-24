@@ -15,7 +15,7 @@ USD_PATH = os.path.join(
 )
 
 # Target objects JSON file
-OBJECTS_JSON_PATH = os.path.join(BASE_DIR,  "target_objects", "target_objects.json")
+OBJECTS_JSON_PATH = os.path.join(BASE_DIR,  "usdfiles", "target_objects.json")
 
 # Target robot root & End effector name
 ROBOT_PRIM_PATH = "/World/Franka_with_cam"
@@ -30,11 +30,11 @@ GRIPPER_SPEED = 0.002
 
 # --- PD Controller ---
 # 7 axles (Arm)
-KPS_ARM = 10000.0
+KPS_ARM = 1000.0
 KDS_ARM = 150.0
 
 # 2 axles (Gripper)
-KPS_GRIPPER = 100000.0
+KPS_GRIPPER = 1000.0
 KDS_GRIPPER = 100.0
 
 # --- Target Cube ---
