@@ -77,10 +77,14 @@ def spawn_target(world, obj_data):
                 mass=0.1
             )
         )
-    
-    return target_prim, position
+    local_offset = np.array(obj_data.get("grasp_offset", [0.0, 0.0, 0.0]))
+    world_offset = r.apply(local_offset)
+    final_grasp_pos = position + world_offset
+    grasp_rot_euler = obj_data.get("grasp_rotation", None)
 
-def compute_grasp_orientation(target_prim):
+    return target_prim, final_grasp_pos, grasp_rot_euler
+
+def compute_grasp_orientation(target_prim,grasp_rot_euler=None):
     """
     Compute EE pose (Quaternion)
     Logic：Get obj pose -> make EE look down
@@ -92,8 +96,15 @@ def compute_grasp_orientation(target_prim):
     r_obj = R.from_quat([quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0]])
 
     # Turning (look down)
-    r_flip = R.from_euler('y', 180, degrees=True)
-    r_target = r_obj * r_flip
+    if grasp_rot_euler is not None:
+        # 使用 JSON 定義的旋轉 (例如側抓)
+        # 注意：這裡的 rotation 是相對於物件座標系的
+        r_offset = R.from_euler('xyz', grasp_rot_euler, degrees=True)
+    else:
+        # 預設行為 (舊的邏輯)：轉 180 度朝下
+        r_offset = R.from_euler('y', 180, degrees=True)
+        
+    r_target = r_obj * r_offset
     
     # Transfer back to Isaac (w, x, y, z)
     t_q = r_target.as_quat() 

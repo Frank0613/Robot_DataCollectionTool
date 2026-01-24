@@ -49,7 +49,7 @@ GRASP_SEQUENCE = [
     {
         "name": "DescendToDrop", 
         "target": "container",
-        "offset": [0.0, 0.0, 0.10], # 進入籃子上方一點點
+        "offset": [0.0, 0.0, 0.1], 
         "tol": 0.15, 
         "gripper": -1, 
         "wait_frames": 30
@@ -58,7 +58,7 @@ GRASP_SEQUENCE = [
     {
         "name": "Release", 
         "target": "container",
-        "offset": [0.0, 0.0, 0.05], 
+        "offset": [0.0, 0.0, 0.1], 
         "tol": 0.15, 
         "gripper": 1, 
         "wait_frames": 60
