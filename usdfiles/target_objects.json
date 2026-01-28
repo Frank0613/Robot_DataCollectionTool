@@ -2,11 +2,12 @@
     {
         "id": 0,
         "type": "usd",
-        "usd_path": "D:\\isaacsim_codes\\Robot_DataCollectionTool\\usdfiles\\target_objects\\Mug_Green.usd",
+        "usd_path": "D:\\isaacsim_codes\\Robot_DataCollectionTool\\usdfiles\\target_objects\\Mug\\Mug_adj.usd",
+        "h5_path": "D:\\isaacsim_codes\\Robot_DataCollectionTool\\usdfiles\\target_objects\\Mug\\Mug.h5",
         "position": [
             0.42,
             -1.5,
-            0.9945
+            1.05
         ],
         "rotation_euler": [
             0,
@@ -18,20 +19,11 @@
             1.0,
             1.0
         ],
-        "grasp_offset": [
-            -0.045,
-            0,
-            0.06
+        "original_scale": [
+            0.001,
+            0.001,
+            0.001
         ],
-        "grasp_rotation": [
-            0,
-            180,
-            90
-        ],
-        "color": [
-            0.0,
-            1.0,
-            0.0
-        ]
+        "grasp_scale_factor": 0.27
     }
 ]
