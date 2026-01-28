@@ -37,7 +37,12 @@ def main():
     # Load target obj from JSON
     task_list = obj_loader.load_targets()
     current_task_idx = 0
-    target_prim, target_pos_goal,target_rot_offset = obj_loader.spawn_target(world, task_list[current_task_idx])
+    target_prim, target_pos_goal, target_rot_offset, grasp_data = obj_loader.spawn_target(
+        world, 
+        task_list[current_task_idx],
+        visualize_grasps=True,  # Enable visualization
+        show_top_k=10           # Show top 10 grasps
+    )
     container_prim_path = "/World/container" 
     container_pos = np.array([0.5, 0.5, 0.0]) # If can't find container
 
@@ -57,7 +62,12 @@ def main():
     
     # Compute EE pose from target obj
     world.step(render=True)
-    target_quat = obj_loader.compute_grasp_orientation(target_prim, target_rot_offset)
+    if grasp_data is not None:
+        # Use quaternion directly from H5 data
+        target_quat = grasp_data['orientation_quat']
+        print(f"[main] Using H5 grasp orientation: {target_quat}")
+    else:
+        target_quat = obj_loader.compute_grasp_orientation(target_prim, target_rot_offset)
 
     # Mode control
     start_pos, _ = controller.ee_prim.get_world_pose()
@@ -89,7 +99,12 @@ def main():
                 if current_task_idx == 0: print("All tasks finished! Looping start.")
 
                 print(f"Spawning Task {current_task_idx+1}/{len(task_list)}")
-                target_prim, target_pos_goal, target_rot_offset = obj_loader.spawn_target(world, task_list[current_task_idx])
+                target_prim, target_pos_goal, target_rot_offset, grasp_data = obj_loader.spawn_target(
+                    world, 
+                    task_list[current_task_idx],
+                    visualize_grasps=True,
+                    show_top_k=10
+                )
 
                 simulation_app.update()
                 world.reset()

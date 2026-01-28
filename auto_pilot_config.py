@@ -7,7 +7,7 @@ GRASP_SEQUENCE = [
         "offset": [0.0, 0.0, 0.1], 
         "tol": 0.11, 
         "gripper": 1, 
-        "wait_frames": 20
+        "wait_frames": 120
     },
     # Step 1: (Move to target pos)
     {
@@ -16,7 +16,7 @@ GRASP_SEQUENCE = [
         "offset": [0.0, 0.0, 0.00], 
         "tol": 0.11, 
         "gripper": 1, 
-        "wait_frames": 20
+        "wait_frames": 120
     },
     # Step 2: (Close gripper)
     {

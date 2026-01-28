@@ -173,7 +173,7 @@ class _FrankaControllerRMP(_BaseFrankaController):
             prim_path="/World/target_visualizer",
             name="target_visualizer",
             position=np.array([0, 0, 0]), 
-            scale=np.array([0.03, 0.03, 0.03]),
+            scale=np.array([0.01, 0.01, 0.01]),
             color=np.array([1.0, 0.0, 0.0]),
             visible=False 
         )
@@ -187,8 +187,9 @@ class _FrankaControllerRMP(_BaseFrankaController):
 
     def _setup_rmpflow(self):
         rmp_config = interface_config_loader.load_supported_motion_policy_config("Franka", "RMPflow")
+       #rmp_config["end_effector_frame_name"] = robot_config.EE_FRAME_NAME
         self._rmpflow = RmpFlow(**rmp_config)
-        self._articulation_rmpflow = ArticulationMotionPolicy(self.franka, self._rmpflow)
+        self._articulation_rmpflow = ArticulationMotionPolicy(self.franka, self._rmpflow) 
 
     def initialize_handles(self):
         super().initialize_handles()
