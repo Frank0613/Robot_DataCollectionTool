@@ -10,6 +10,7 @@ import robot_config as robot_config
 from core.input_manager import InputManager
 from core.robot_controller import FrankaController
 from core.object_spawner import ObjectSpawner
+from core.container_manager import ContainerManager
 
 def main():
 
@@ -49,10 +50,12 @@ def main():
     controller = FrankaController(world)
     input_mgr = InputManager()
     spawner = ObjectSpawner(world)
+    container_mgr = ContainerManager(world)
 
     world.reset()
     controller.initialize_handles()
     spawner.respawn()
+    container_mgr.respawn()
     for _ in range(20):
         if world.is_playing(): world.step(render=False)
 
@@ -71,6 +74,7 @@ def main():
                 world.reset()
                 controller.initialize_handles()
                 spawner.respawn()
+                container_mgr.respawn()
                 needs_reset = False
             
             # Get input

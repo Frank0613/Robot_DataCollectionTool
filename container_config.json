@@ -1,0 +1,13 @@
+{
+    "selected": "plastic_basket",
+    "containers": {
+        "plastic_basket": {
+            "name": "plastic_basket",
+            "path": "usdfiles/containers/plastic_basket.usd"
+        },
+        "test_box": {
+            "name": "test_box",
+            "path": "usdfiles/containers/cube.usd"
+        }
+    }
+}
