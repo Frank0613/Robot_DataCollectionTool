@@ -9,6 +9,9 @@ class InputManager:
         self._input = carb.input.acquire_input_interface()
         self._app_window = omni.appwindow.get_default_app_window()
         self._keyboard = self._app_window.get_keyboard()
+        self.gripper_is_open = True
+        self.prev_c_state = False
+        self.prev_r_state = False
         
     def get_command(self):
         """
@@ -26,10 +29,18 @@ class InputManager:
         if self._input.get_keyboard_value(self._keyboard, carb.input.KeyboardInput.E): delta[2] -= speed
         
         # Gripper Control
-        gripper_cmd = 0
-        if self._input.get_keyboard_value(self._keyboard, carb.input.KeyboardInput.C): 
-            gripper_cmd = -1 # Close
-        if self._input.get_keyboard_value(self._keyboard, carb.input.KeyboardInput.V): 
-            gripper_cmd = 1  # Open
+        c_pressed = self._input.get_keyboard_value(self._keyboard, carb.input.KeyboardInput.C)
+        if c_pressed and not self.prev_c_state:
+            self.gripper_is_open = not self.gripper_is_open
             
-        return delta, gripper_cmd
+        self.prev_c_state = c_pressed
+        gripper_cmd = 1 if self.gripper_is_open else -1
+
+        # Reset Command
+        reset_cmd = False
+        r_pressed = self._input.get_keyboard_value(self._keyboard, carb.input.KeyboardInput.R)
+        if r_pressed and not self.prev_r_state:
+            reset_cmd = True
+        self.prev_r_state = r_pressed
+
+        return delta, gripper_cmd, reset_cmd

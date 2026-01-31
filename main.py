@@ -1,15 +1,15 @@
 import argparse
-import os
+import os 
 from isaacsim import SimulationApp
 simulation_app = SimulationApp({"headless": False})
 
 from omni.isaac.core import World
-from omni.isaac.core.objects import DynamicCuboid
 from omni.isaac.core.utils.stage import open_stage, is_stage_loading
 
 import robot_config as robot_config
 from core.input_manager import InputManager
 from core.robot_controller import FrankaController
+from core.object_spawner import ObjectSpawner
 
 def main():
 
@@ -44,31 +44,21 @@ def main():
 
     # Init world
     world = World(stage_units_in_meters=1.0)
-    
-    # Add target cube
-    print("Add target cube...")
-    world.scene.add(
-        DynamicCuboid(
-            prim_path="/World/cube",
-            name="cube",
-            position=robot_config.CUBE_POSITION,
-            scale=robot_config.CUBE_SCALE,
-            color=robot_config.CUBE_COLOR,
-            mass=0.1
-        )
-    )
 
     # Init controller & Input
     controller = FrankaController(world)
     input_mgr = InputManager()
+    spawner = ObjectSpawner(world)
+
     world.reset()
     controller.initialize_handles()
+    spawner.respawn()
     for _ in range(20):
         if world.is_playing(): world.step(render=False)
 
     print("==========================================")
     print(f"Successful")
-    print("Move : WASDQE | Gripper : C/V")
+    print("Move : WASDQE | Gripper : C")
     print("==========================================")
 
     needs_reset = False
@@ -80,11 +70,14 @@ def main():
             if needs_reset:
                 world.reset()
                 controller.initialize_handles()
+                spawner.respawn()
                 needs_reset = False
             
             # Get input
-            delta_pos, gripper_cmd = input_mgr.get_command()
-            
+            delta_pos, gripper_cmd, reset_cmd = input_mgr.get_command()
+
+            needs_reset = reset_cmd
+
             # Apply control
             controller.apply_control(delta_pos, gripper_cmd)
             

@@ -62,6 +62,9 @@ class _BaseFrankaController:
         """ Common reset logic """
         print(f"Resetting Handles ({robot_config.CONTROLLER_MODE})...")
         self.ee_prim.initialize()
+
+        safe_joint_pos = np.array([0.0, -0.78, 0.0, -2.35, 0.0, 1.57, 0.78, 0.04, 0.04])
+        self.franka.set_joint_positions(safe_joint_pos)
         
         self.franka.get_articulation_controller().set_gains(
             kps=np.array([robot_config.KPS_ARM] * 7 + [robot_config.KPS_GRIPPER] * 2), 
@@ -189,11 +192,7 @@ class _FrankaControllerRMP(_BaseFrankaController):
 
     def initialize_handles(self):
         super().initialize_handles()
-        
-        # RMP specific reset
-        safe_joint_pos = np.array([0.0, -0.78, 0.0, -2.35, 0.0, 1.57, 0.0, 0.04, 0.04])
-        self.franka.set_joint_positions(safe_joint_pos)
-        
+           
         base_pos, base_rot = self.franka.get_world_pose()
         self._rmpflow.set_robot_base_pose(base_pos, base_rot)
         self._rmpflow.reset()
