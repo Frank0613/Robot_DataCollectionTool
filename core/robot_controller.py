@@ -13,7 +13,8 @@ from omni.isaac.motion_generation import (
 from omni.isaac.core.utils.types import ArticulationAction
 from omni.isaac.core.utils.prims import is_prim_path_valid
 from scipy.spatial.transform import Rotation as R
-import robot_config as robot_config
+import robot_config
+
 
 # Looking for robot, Init gripper
 class _BaseFrankaController:

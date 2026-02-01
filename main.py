@@ -5,12 +5,15 @@ simulation_app = SimulationApp({"headless": False})
 
 from omni.isaac.core import World
 from omni.isaac.core.utils.stage import open_stage, is_stage_loading
+from omni.isaac.core.prims import XFormPrim
 
 import robot_config as robot_config
+import usd_config as usd_config
 from core.input_manager import InputManager
 from core.robot_controller import FrankaController
 from core.object_spawner import ObjectSpawner
 from core.container_manager import ContainerManager
+from core.termination_manager import TerminationManager
 
 def main():
 
@@ -28,18 +31,18 @@ def main():
         if val is not None:
             setattr(robot_config, config_var, val)
     if args.scene:
-        robot_config.SCENE_NAME = args.scene
-        robot_config.USD_PATH = os.path.join(
-            robot_config.BASE_DIR,
+        usd_config.SCENE_NAME = args.scene
+        usd_config.USD_PATH = os.path.join(
+            usd_config.BASE_DIR,
             "usdfiles",
             "scenes",
-            f"{robot_config.SCENE_NAME}.usd"
+            f"{usd_config.SCENE_NAME}.usd"
         )
 
 
     # Load scene
-    print(f"Loading Scene: {robot_config.USD_PATH}")
-    open_stage(robot_config.USD_PATH)
+    print(f"Loading Scene: {usd_config.USD_PATH}")
+    open_stage(usd_config.USD_PATH)
     while is_stage_loading():
         simulation_app.update()
 
@@ -51,6 +54,7 @@ def main():
     input_mgr = InputManager()
     spawner = ObjectSpawner(world)
     container_mgr = ContainerManager(world)
+    termination_mgr = TerminationManager(world, container_mgr, spawner,controller)
 
     world.reset()
     controller.initialize_handles()
@@ -75,6 +79,7 @@ def main():
                 controller.initialize_handles()
                 spawner.respawn()
                 container_mgr.respawn()
+                termination_mgr.reset()
                 needs_reset = False
             
             # Get input
@@ -87,7 +92,10 @@ def main():
             
             # Update physics
             world.step(render=True)
-            
+
+            # Check termination condition
+            if not needs_reset and termination_mgr.check_task_success():
+                needs_reset = True
         else:
             needs_reset = True
             simulation_app.update()
