@@ -100,11 +100,16 @@ def main():
             world.step(render=True)
 
             if data_collector.recording:
-                data_collector.collect_frame(controller, delta_pos)
+                data_collector.collect_frame(controller, delta_pos, spawner)
 
             # Check termination condition
-            if not needs_reset and termination_mgr.check_task_success():
-                data_collector.save_demo(success=True)
+            is_success, success_obj_name = termination_mgr.check_task_success()
+            if not needs_reset and is_success:
+                data_collector.save_demo(controller, 
+                    spawner, 
+                    success_obj_name, 
+                    success=True
+                )
                 needs_reset = True
         else:
             needs_reset = True

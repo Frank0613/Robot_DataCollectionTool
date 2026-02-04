@@ -41,6 +41,6 @@ class TerminationManager:
             print(f"==========================================")
             print(f"[Task Success] Object '{inside_obj_name}' stable in container for 60 frames!")
             print(f"==========================================")
-            return True
+            return True, inside_obj_name
             
-        return False
+        return False, None
