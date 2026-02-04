@@ -19,14 +19,23 @@ class InputManager:
         """
         delta = np.zeros(3)
         speed = robot_config.MOVE_SPEED
-        
+        move_keys = [
+            carb.input.KeyboardInput.W, carb.input.KeyboardInput.S,
+            carb.input.KeyboardInput.A, carb.input.KeyboardInput.D,
+            carb.input.KeyboardInput.Q, carb.input.KeyboardInput.E
+        ]
+
         # Robot movement
-        if self._input.get_keyboard_value(self._keyboard, carb.input.KeyboardInput.W): delta[0] += speed
-        if self._input.get_keyboard_value(self._keyboard, carb.input.KeyboardInput.S): delta[0] -= speed
-        if self._input.get_keyboard_value(self._keyboard, carb.input.KeyboardInput.A): delta[1] += speed
-        if self._input.get_keyboard_value(self._keyboard, carb.input.KeyboardInput.D): delta[1] -= speed
-        if self._input.get_keyboard_value(self._keyboard, carb.input.KeyboardInput.Q): delta[2] += speed
-        if self._input.get_keyboard_value(self._keyboard, carb.input.KeyboardInput.E): delta[2] -= speed
+        any_move_pressed = False
+        for i, key in enumerate(move_keys):
+            if self._input.get_keyboard_value(self._keyboard, key):
+                any_move_pressed = True
+                if key == carb.input.KeyboardInput.W: delta[0] += speed
+                elif key == carb.input.KeyboardInput.S: delta[0] -= speed
+                elif key == carb.input.KeyboardInput.A: delta[1] += speed
+                elif key == carb.input.KeyboardInput.D: delta[1] -= speed
+                elif key == carb.input.KeyboardInput.Q: delta[2] += speed
+                elif key == carb.input.KeyboardInput.E: delta[2] -= speed
         
         # Gripper Control
         c_pressed = self._input.get_keyboard_value(self._keyboard, carb.input.KeyboardInput.C)
@@ -36,6 +45,8 @@ class InputManager:
         self.prev_c_state = c_pressed
         gripper_cmd = 1 if self.gripper_is_open else -1
 
+        is_any_action = any_move_pressed or c_pressed
+
         # Reset Command
         reset_cmd = False
         r_pressed = self._input.get_keyboard_value(self._keyboard, carb.input.KeyboardInput.R)
@@ -43,4 +54,4 @@ class InputManager:
             reset_cmd = True
         self.prev_r_state = r_pressed
 
-        return delta, gripper_cmd, reset_cmd
+        return delta, gripper_cmd, reset_cmd,is_any_action

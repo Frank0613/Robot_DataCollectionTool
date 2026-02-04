@@ -14,6 +14,7 @@ from core.robot_controller import FrankaController
 from core.object_spawner import ObjectSpawner
 from core.container_manager import ContainerManager
 from core.termination_manager import TerminationManager
+from core.data_collector import DataCollector
 
 def main():
 
@@ -55,6 +56,7 @@ def main():
     spawner = ObjectSpawner(world)
     container_mgr = ContainerManager(world)
     termination_mgr = TerminationManager(world, container_mgr, spawner,controller)
+    data_collector = DataCollector()
 
     world.reset()
     controller.initialize_handles()
@@ -80,21 +82,29 @@ def main():
                 spawner.respawn()
                 container_mgr.respawn()
                 termination_mgr.reset()
+                data_collector.reset_collector()
                 needs_reset = False
             
             # Get input
-            delta_pos, gripper_cmd, reset_cmd = input_mgr.get_command()
-
+            delta_pos, gripper_cmd, reset_cmd,is_any_action = input_mgr.get_command()
             needs_reset = reset_cmd
+
+            # Start recording if detect any keyboard action
+            if not data_collector.recording and is_any_action:
+                print(" Start Recording...")
+                data_collector.recording = True
 
             # Apply control
             controller.apply_control(delta_pos, gripper_cmd)
-            
             # Update physics
             world.step(render=True)
 
+            if data_collector.recording:
+                data_collector.collect_frame(controller, delta_pos)
+
             # Check termination condition
             if not needs_reset and termination_mgr.check_task_success():
+                data_collector.save_demo(success=True)
                 needs_reset = True
         else:
             needs_reset = True
