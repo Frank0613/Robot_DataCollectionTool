@@ -20,10 +20,35 @@ class ContainerManager:
             return None
         with open(self.config_path, 'r', encoding='utf-8') as f:
             return json.load(f)
-
-    def respawn(self):
+        
+    def get_container_info(self, key=None):
+        """
+        Follow the config JSON to get container info.
+        
+        Args:
+            key (str, optional)
+            
+        Returns:
+            dict: name, path 
+        """
         config_data = self._load_config()
-        if not config_data: return
+        if not config_data:
+            print("[ContainerManager] Config file not found.")
+            return {}
+
+        target_key = key if key is not None else config_data.get("selected", "")
+        
+        all_containers = config_data.get("containers", {})
+        container_data = all_containers.get(target_key, {})
+
+        if not container_data:
+            print(f"[ContainerManager] Warning: Key '{target_key}' not found in config.")
+            
+        return container_data
+    
+    def respawn(self):
+        container_info = self.get_container_info()
+        if not container_info: return
 
         if self.container_prim and self.world.scene.object_exists(self.container_prim.name):
             self.world.scene.remove_object(self.container_prim.name)
@@ -31,9 +56,6 @@ class ContainerManager:
             prim_utils.delete_prim(usd_config.CONTAINER_PRIM_PATH)
 
         # Read JSON
-        selected_key = config_data.get("selected", "")
-        container_info = config_data.get("containers", {}).get(selected_key, {})
-        
         name = container_info.get("name", "container")
         rel_path = container_info.get("path", "")
 

@@ -105,9 +105,12 @@ def main():
             # Check termination condition
             is_success, success_obj_name = termination_mgr.check_task_success()
             if not needs_reset and is_success:
+                container_info = container_mgr.get_container_info()
+                c_name = container_info.get("name", "container")
                 data_collector.save_demo(controller, 
                     spawner, 
-                    success_obj_name, 
+                    success_obj_name,
+                    container_name=c_name, 
                     success=True
                 )
                 needs_reset = True

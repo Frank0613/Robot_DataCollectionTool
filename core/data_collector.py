@@ -64,8 +64,7 @@ class DataCollector:
         # Init objects state
         for obj_name in spawner.spawned_objects:
             real_name = self._get_real_name(robot_controller, obj_name)
-            
-            # 這裡我們還是要拿 RigidPrim 來取得物理數據
+    
             scene_obj = robot_controller.world.scene.get_object(obj_name)
             stage = robot_controller.world.stage
             base_prim = stage.GetPrimAtPath(scene_obj.prim_path)
@@ -112,7 +111,7 @@ class DataCollector:
         }
         self.current_demo_data.append(frame_data)
 
-    def save_demo(self, controller, spawner, success_obj_name, success=True):
+    def save_demo(self, controller, spawner, success_obj_name,container_name="container", success=True):
         """save current demo data to hdf5 file"""
         if len(self.current_demo_data) < 20:
             self.reset_collector()
@@ -130,7 +129,7 @@ class DataCollector:
             # Save demo Attribute
             demo_group.attrs['num_samples'] = len(self.current_demo_data)
             demo_group.attrs['success'] = success
-            demo_group.attrs['language_instruction'] = f"pick up the {display_name} and place it in the container"
+            demo_group.attrs['language_instruction'] = f"pick up the {display_name} and place it in the {container_name}"
 
             # --- Group initial_state ---
             init_group = demo_group.create_group('initial_state')
