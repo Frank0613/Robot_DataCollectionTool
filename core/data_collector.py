@@ -92,22 +92,85 @@ class DataCollector:
         self.current_demo_data = []
         self.recording = False
 
-    def collect_frame(self, robot_controller, delta_pos, spawner):
-        """record current frame data"""
+    def collect_frame(self, robot_controller, delta_pos, gripper_cmd, spawner):
         if not self.current_demo_data:
             self.capture_initial_state(robot_controller, spawner)
 
+        # --- [新增] 獲取機械臂即時狀態 ---
         joint_pos = robot_controller.franka.get_joint_positions()
         joint_vel = robot_controller.franka.get_joint_velocities()
+        robot_pos, robot_quat = robot_controller.franka.get_world_pose()
+        robot_root_pose = np.concatenate([robot_pos, robot_quat])
+        robot_root_vel = np.concatenate([
+            robot_controller.franka.get_linear_velocity(),
+            robot_controller.franka.get_angular_velocity()
+        ])
+
+        # 獲取末端執行器與夾爪資訊
         ee_pos, ee_quat = robot_controller.ee_prim.get_world_pose()
+        cur_gripper_width = robot_controller.current_gripper_width
         
+        # --- [修改] 獲取目標物體即時資訊 (包含速度) ---
+        obj_pos = np.zeros(3)
+        obj_quat = np.array([1.0, 0.0, 0.0, 0.0])
+        obj_root_vel = np.zeros(6)
+        display_name = "none" # 用於 HDF5 群組名稱
+        
+        if spawner.spawned_objects:
+            obj_name_id = spawner.spawned_objects[0] # 這是原始的 ID (spawned_obj_0)
+            
+            # 使用你定義的方法獲取正確的名稱 (如 pudding_box)
+            display_name = self._get_real_name(robot_controller, obj_name_id)
+            
+            scene_obj = robot_controller.world.scene.get_object(obj_name_id)
+            if scene_obj:
+                stage = robot_controller.world.stage
+                base_prim = stage.GetPrimAtPath(scene_obj.prim_path)
+                
+                target_rb_prim = None
+                for prim in Usd.PrimRange(base_prim):
+                    if prim.HasAPI(UsdPhysics.RigidBodyAPI):
+                        target_rb_prim = prim
+                        break
+                
+                if target_rb_prim:
+                    rb_path = str(target_rb_prim.GetPath())
+                    temp_rb = RigidPrim(prim_path=rb_path, name="temp_collect")
+                    
+                    obj_pos, obj_quat = temp_rb.get_world_pose()
+                    obj_root_vel = np.concatenate([
+                        temp_rb.get_linear_velocity(),
+                        temp_rb.get_angular_velocity()
+                    ])
+
+        # 構建基礎向量 (actions 7維, object 13維)
+        actions = np.zeros(7, dtype=np.float32)
+        actions[:3] = delta_pos
+        actions[3] = gripper_cmd
+
+        object_vec = np.concatenate([
+            obj_pos, obj_quat, ee_pos, [cur_gripper_width], [0.0, 0.0]
+        ]).astype(np.float32)
+
+        # --- [新增] 將資料填入 frame_data，使用斜線 "/" 來定義 HDF5 群組階層 ---
         frame_data = {
-            "action": delta_pos,
-            "joint_pos": joint_pos,
-            "joint_vel": joint_vel,
-            "eef_pos": ee_pos,
-            "eef_quat": ee_quat,
-            "gripper_pos": np.array([robot_controller.current_gripper_width] * 2)
+            "actions": actions,
+            "obj_positions": obj_pos.astype(np.float32),
+            "obj_orientations": obj_quat.astype(np.float32),
+            "eef_pos": ee_pos.astype(np.float32),
+            "eef_quat": ee_quat.astype(np.float32),
+            "gripper_pos": np.array([cur_gripper_width] * 2, dtype=np.float32),
+            "joint_pos": joint_pos.astype(np.float32),
+            "joint_vel": joint_vel.astype(np.float32),
+            "object": object_vec,
+            
+            # 新增 states 階層資料
+            "states/articulation/robot/joint_position": joint_pos.astype(np.float32),
+            "states/articulation/robot/joint_velocity": joint_vel.astype(np.float32),
+            "states/articulation/robot/root_pose": robot_root_pose.astype(np.float32),
+            "states/articulation/robot/root_velocity": robot_root_vel.astype(np.float32),
+            f"states/target_object/{display_name}/root_pose": np.concatenate([obj_pos, obj_quat]).astype(np.float32),
+            f"states/target_object/{display_name}/root_velocity": obj_root_vel.astype(np.float32)
         }
         self.current_demo_data.append(frame_data)
 

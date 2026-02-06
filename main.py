@@ -100,7 +100,7 @@ def main():
             world.step(render=True)
 
             if data_collector.recording:
-                data_collector.collect_frame(controller, delta_pos, spawner)
+                data_collector.collect_frame(controller, delta_pos, gripper_cmd, spawner)
 
             # Check termination condition
             is_success, success_obj_name = termination_mgr.check_task_success()
