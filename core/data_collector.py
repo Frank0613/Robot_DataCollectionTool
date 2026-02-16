@@ -6,7 +6,7 @@ from omni.isaac.core.prims import RigidPrim
 from pxr import Usd, UsdPhysics
 
 class DataCollector:
-    def __init__(self, save_dir="datasets", filename="dataset.hdf5"):
+    def __init__(self, save_dir="datasets", filename="dataset.hdf5",env_name="Default_Scene"):
         self.save_dir = save_dir
         if not os.path.exists(self.save_dir):
             os.makedirs(self.save_dir)
@@ -15,13 +15,16 @@ class DataCollector:
         self.recording = False
         self.current_demo_data = []
         self.initial_state_snapshot = None
+        self.camera_manager = None
+        self.step_counter = 0
+        self.record_interval = 1
         
         # Init file if not exists
         with h5py.File(self.filepath, 'a') as f:
             if 'data' not in f:
                 data_group = f.create_group('data')
                 # Global info (Attribute)
-                env_args = {"env_name": "Franka_Tabletop_Scene"} 
+                env_args = {"env_name": env_name} 
                 data_group.attrs['env_args'] = json.dumps(env_args)
                 data_group.attrs['total'] = 0
 
@@ -90,89 +93,91 @@ class DataCollector:
     def reset_collector(self):
         """clear current demo data"""
         self.current_demo_data = []
+        self.step_counter = 0
         self.recording = False
 
-    def collect_frame(self, robot_controller, delta_pos, gripper_cmd, spawner):
-        if not self.current_demo_data:
-            self.capture_initial_state(robot_controller, spawner)
+    def collect_frame(self, robot_controller, delta_pos, gripper_cmd, spawner, camera_manager):
+            if robot_controller.franka is None:
+                return
 
-        # --- [新增] 獲取機械臂即時狀態 ---
-        joint_pos = robot_controller.franka.get_joint_positions()
-        joint_vel = robot_controller.franka.get_joint_velocities()
-        robot_pos, robot_quat = robot_controller.franka.get_world_pose()
-        robot_root_pose = np.concatenate([robot_pos, robot_quat])
-        robot_root_vel = np.concatenate([
-            robot_controller.franka.get_linear_velocity(),
-            robot_controller.franka.get_angular_velocity()
-        ])
+            self.step_counter += 1
+            
+            if not self.current_demo_data:
+                self.capture_initial_state(robot_controller, spawner)
 
-        # 獲取末端執行器與夾爪資訊
-        ee_pos, ee_quat = robot_controller.ee_prim.get_world_pose()
-        cur_gripper_width = robot_controller.current_gripper_width
-        
-        # --- [修改] 獲取目標物體即時資訊 (包含速度) ---
-        obj_pos = np.zeros(3)
-        obj_quat = np.array([1.0, 0.0, 0.0, 0.0])
-        obj_root_vel = np.zeros(6)
-        display_name = "none" # 用於 HDF5 群組名稱
-        
-        if spawner.spawned_objects:
-            obj_name_id = spawner.spawned_objects[0] # 這是原始的 ID (spawned_obj_0)
+            lin_vel = robot_controller.franka.get_linear_velocity()
+            ang_vel = robot_controller.franka.get_angular_velocity()
             
-            # 使用你定義的方法獲取正確的名稱 (如 pudding_box)
-            display_name = self._get_real_name(robot_controller, obj_name_id)
+            if lin_vel is None or ang_vel is None:
+                return 
+
+            joint_pos = robot_controller.franka.get_joint_positions()
+            joint_vel = robot_controller.franka.get_joint_velocities()
+            robot_pos, robot_quat = robot_controller.franka.get_world_pose()
+            robot_root_pose = np.concatenate([robot_pos, robot_quat])
+            robot_root_vel = np.concatenate([lin_vel, ang_vel])
+
+            ee_pos, ee_quat = robot_controller.ee_prim.get_world_pose()
+            cur_gripper_width = robot_controller.current_gripper_width
             
-            scene_obj = robot_controller.world.scene.get_object(obj_name_id)
-            if scene_obj:
-                stage = robot_controller.world.stage
-                base_prim = stage.GetPrimAtPath(scene_obj.prim_path)
+            obj_pos = np.zeros(3)
+            obj_quat = np.array([1.0, 0.0, 0.0, 0.0])
+            obj_root_vel = np.zeros(6)
+            display_name = "none"
+            
+            if spawner.spawned_objects:
+                obj_name_id = spawner.spawned_objects[0]
+                display_name = self._get_real_name(robot_controller, obj_name_id)
+                scene_obj = robot_controller.world.scene.get_object(obj_name_id)
                 
-                target_rb_prim = None
-                for prim in Usd.PrimRange(base_prim):
-                    if prim.HasAPI(UsdPhysics.RigidBodyAPI):
-                        target_rb_prim = prim
-                        break
-                
-                if target_rb_prim:
-                    rb_path = str(target_rb_prim.GetPath())
-                    temp_rb = RigidPrim(prim_path=rb_path, name="temp_collect")
+                if scene_obj:
+                    stage = robot_controller.world.stage
+                    base_prim = stage.GetPrimAtPath(scene_obj.prim_path)
+                    target_rb_prim = None
+                    for prim in Usd.PrimRange(base_prim):
+                        if prim.HasAPI(UsdPhysics.RigidBodyAPI):
+                            target_rb_prim = prim
+                            break
                     
-                    obj_pos, obj_quat = temp_rb.get_world_pose()
-                    obj_root_vel = np.concatenate([
-                        temp_rb.get_linear_velocity(),
-                        temp_rb.get_angular_velocity()
-                    ])
+                    if target_rb_prim:
+                        rb_path = str(target_rb_prim.GetPath())
+                        temp_rb = RigidPrim(prim_path=rb_path, name="temp_collect")
+                        o_pos, o_quat = temp_rb.get_world_pose()
+                        o_lin_vel = temp_rb.get_linear_velocity()
+                        o_ang_vel = temp_rb.get_angular_velocity()
+                        
+                        if o_lin_vel is not None:
+                            obj_pos, obj_quat = o_pos, o_quat
+                            obj_root_vel = np.concatenate([o_lin_vel, o_ang_vel])
 
-        # 構建基礎向量 (actions 7維, object 13維)
-        actions = np.zeros(7, dtype=np.float32)
-        actions[:3] = delta_pos
-        actions[3] = gripper_cmd
+            actions = np.zeros(7, dtype=np.float32)
+            actions[:3] = delta_pos
+            actions[3] = gripper_cmd
 
-        object_vec = np.concatenate([
-            obj_pos, obj_quat, ee_pos, [cur_gripper_width], [0.0, 0.0]
-        ]).astype(np.float32)
+            object_vec = np.concatenate([
+                obj_pos, obj_quat, ee_pos, [cur_gripper_width], [0.0, 0.0]
+            ]).astype(np.float32)
 
-        # --- [新增] 將資料填入 frame_data，使用斜線 "/" 來定義 HDF5 群組階層 ---
-        frame_data = {
-            "actions": actions,
-            "obj_positions": obj_pos.astype(np.float32),
-            "obj_orientations": obj_quat.astype(np.float32),
-            "eef_pos": ee_pos.astype(np.float32),
-            "eef_quat": ee_quat.astype(np.float32),
-            "gripper_pos": np.array([cur_gripper_width] * 2, dtype=np.float32),
-            "joint_pos": joint_pos.astype(np.float32),
-            "joint_vel": joint_vel.astype(np.float32),
-            "object": object_vec,
-            
-            # 新增 states 階層資料
-            "states/articulation/robot/joint_position": joint_pos.astype(np.float32),
-            "states/articulation/robot/joint_velocity": joint_vel.astype(np.float32),
-            "states/articulation/robot/root_pose": robot_root_pose.astype(np.float32),
-            "states/articulation/robot/root_velocity": robot_root_vel.astype(np.float32),
-            f"states/target_object/{display_name}/root_pose": np.concatenate([obj_pos, obj_quat]).astype(np.float32),
-            f"states/target_object/{display_name}/root_velocity": obj_root_vel.astype(np.float32)
-        }
-        self.current_demo_data.append(frame_data)
+            frame_data = {
+                "actions": actions,
+                "joint_pos": joint_pos.astype(np.float32),
+                "joint_vel": joint_vel.astype(np.float32),
+                "eef_pos": ee_pos.astype(np.float32),
+                "eef_quat": ee_quat.astype(np.float32),
+                "states/articulation/robot/joint_position": joint_pos.astype(np.float32),
+                "states/articulation/robot/joint_velocity": joint_vel.astype(np.float32),
+                "states/articulation/robot/root_pose": robot_root_pose.astype(np.float32),
+                "states/articulation/robot/root_velocity": robot_root_vel.astype(np.float32),
+                f"states/target_object/{display_name}/root_pose": np.concatenate([obj_pos, obj_quat]).astype(np.float32),
+                f"states/target_object/{display_name}/root_velocity": obj_root_vel.astype(np.float32)
+            }
+
+            # --- Camera Sample rate (30 step) ---
+            if camera_manager and (self.step_counter % 30 == 0):
+                cam_data = camera_manager.get_all_camera_data()
+                frame_data.update(cam_data)
+
+            self.current_demo_data.append(frame_data)
 
     def save_demo(self, controller, spawner, success_obj_name,container_name="container", success=True):
         """save current demo data to hdf5 file"""
@@ -212,15 +217,30 @@ class DataCollector:
                 obj_grp.create_dataset("root_pose", data=obj_info["root_pose"].astype(np.float32))
                 obj_grp.create_dataset("root_velocity", data=obj_info["root_velocity"].astype(np.float32))
             
+            all_keys = set()
+            for frame in self.current_demo_data:
+                all_keys.update(frame.keys())
+
             # obs group
             obs_group = demo_group.create_group('obs')
             
             # list to Dataset
-            for key in self.current_demo_data[0].keys():
-                data = np.array([frame[key] for frame in self.current_demo_data])
-                obs_group.create_dataset(key, data=data.astype(np.float32))
+            for key in all_keys:
+                data_list = [frame[key] for frame in self.current_demo_data if key in frame]
+                if not data_list: continue
+                
+                data = np.array(data_list)
+                
+                if "/rgb" in key or "/depth" in key:
+                    obs_group.create_dataset(
+                        key, 
+                        data=data, 
+                        compression="gzip", 
+                        compression_opts=4
+                    )
+                else:
+                    obs_group.create_dataset(key, data=data.astype(np.float32))
 
-            # update total demos
             root.attrs['total'] = demo_id + 1
         
         print(f"[DataCollector] {demo_name} saved to {self.filepath} ({len(self.current_demo_data)} frames)")

@@ -15,6 +15,7 @@ from core.object_spawner import ObjectSpawner
 from core.container_manager import ContainerManager
 from core.termination_manager import TerminationManager
 from core.data_collector import DataCollector
+from core.camera_manager import CameraManager
 
 def main():
 
@@ -46,6 +47,7 @@ def main():
     open_stage(usd_config.USD_PATH)
     while is_stage_loading():
         simulation_app.update()
+    env_name = os.path.splitext(os.path.basename(usd_config.USD_PATH))[0]
 
     # Init world
     world = World(stage_units_in_meters=1.0)
@@ -56,10 +58,12 @@ def main():
     spawner = ObjectSpawner(world)
     container_mgr = ContainerManager(world)
     termination_mgr = TerminationManager(world, container_mgr, spawner,controller)
-    data_collector = DataCollector()
+    data_collector = DataCollector(env_name=env_name)
+    camera_mgr = CameraManager()
 
     world.reset()
     controller.initialize_handles()
+    camera_mgr.initialize_cameras()
     spawner.respawn()
     container_mgr.respawn()
     for _ in range(20):
@@ -79,6 +83,7 @@ def main():
             if needs_reset:
                 world.reset()
                 controller.initialize_handles()
+                camera_mgr.initialize_cameras()
                 spawner.respawn()
                 container_mgr.respawn()
                 termination_mgr.reset()
@@ -100,7 +105,7 @@ def main():
             world.step(render=True)
 
             if data_collector.recording:
-                data_collector.collect_frame(controller, delta_pos, gripper_cmd, spawner)
+                data_collector.collect_frame(controller, delta_pos, gripper_cmd, spawner, camera_mgr)
 
             # Check termination condition
             is_success, success_obj_name = termination_mgr.check_task_success()
