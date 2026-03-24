@@ -43,7 +43,7 @@ class InputManager:
             self.gripper_is_open = not self.gripper_is_open
             
         self.prev_c_state = c_pressed
-        gripper_cmd = 1 if self.gripper_is_open else -1
+        gripper_cmd = 0 if self.gripper_is_open else 1
 
         is_any_action = any_move_pressed or c_pressed
 

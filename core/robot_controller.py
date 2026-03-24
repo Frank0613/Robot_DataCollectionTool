@@ -73,10 +73,9 @@ class _BaseFrankaController:
         )
         
     def _update_gripper(self, gripper_cmd):
-        if gripper_cmd != 0:
-            self.gripper_state = float(gripper_cmd)
+        self.gripper_state = float(gripper_cmd)
             
-        goal_width = 0.04 if self.gripper_state > 0 else 0.0
+        goal_width = 0.04 if self.gripper_state == 0 else 0.0
         step = robot_config.GRIPPER_SPEED
         
         if self.current_gripper_width < goal_width:
