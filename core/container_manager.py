@@ -5,7 +5,7 @@ import omni.isaac.core.utils.prims as prim_utils
 from omni.isaac.core.utils.stage import add_reference_to_stage
 from omni.isaac.core.prims import XFormPrim
 from pxr import UsdGeom, Usd, Gf
-import usd_config
+from configs import usd_config
 
 class ContainerManager:
     def __init__(self, world):

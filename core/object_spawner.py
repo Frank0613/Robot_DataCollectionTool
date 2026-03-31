@@ -5,7 +5,7 @@ from omni.isaac.core.utils.prims import delete_prim, is_prim_path_valid
 from omni.isaac.core.utils.stage import add_reference_to_stage
 from omni.isaac.core.prims import XFormPrim
 from pxr import UsdGeom 
-import usd_config
+from configs import usd_config
 
 class ObjectSpawner:
     def __init__(self, world):

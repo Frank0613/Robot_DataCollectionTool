@@ -1,6 +1,6 @@
 import os
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Scene
 SCENE_NAME = "Warehouse"
@@ -15,6 +15,6 @@ OBJECTS_DIR = os.path.join(BASE_DIR, "usdfiles", "objects")
 OBJ_SPAWN_POINT_ROOT = "/World/target_points"
 
 # Container 
-CONTAINER_CONFIG_PATH = os.path.join(BASE_DIR, "container_config.json")
+CONTAINER_CONFIG_PATH = os.path.join(BASE_DIR, "configs", "container_config.json")
 CONTAINER_POINT_PATH = "/World/target_points/container_pos" 
 CONTAINER_PRIM_PATH = "/World/Container"

@@ -1,7 +1,7 @@
 import carb
 import omni.appwindow
 import numpy as np
-import robot_config
+from configs import robot_config
 
 class InputManager:
     def __init__(self):

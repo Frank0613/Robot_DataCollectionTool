@@ -1,30 +1,45 @@
 import argparse
-import os 
-from isaacsim import SimulationApp
-simulation_app = SimulationApp({"headless": False})
+import os
+import sys
 
-from omni.isaac.core import World
-from omni.isaac.core.utils.stage import open_stage, is_stage_loading
-from omni.isaac.core.prims import XFormPrim
-
-import robot_config as robot_config
-import usd_config as usd_config
-from core.input_manager import InputManager
-from core.robot_controller import FrankaController
-from core.object_spawner import ObjectSpawner
-from core.container_manager import ContainerManager
-from core.termination_manager import TerminationManager
-from core.data_collector import DataCollector
-from core.camera_manager import CameraManager
+from tools.hdf5_reader import print_structure_by_path
+from tools.hdf5_checker import visualize_hdf5_cameras_by_path
 
 def main():
-
-    # Argument Parser
     parser = argparse.ArgumentParser(description="Robot Control Tool")
-    parser.add_argument("--mode", type=str, choices=["ik", "rmpflow"], help="Override Controller Mode")
-    parser.add_argument("--scene", type=str, help="Scene selection")
+    parser.add_argument("--mode", type=str, choices=["ik", "rmpflow"])
+    parser.add_argument("--scene", type=str)
+    parser.add_argument("--readfile", type=str)
+    parser.add_argument("--checkfile", type=str)
+    parser.add_argument("--index", type=int, default=0)
     args, unknown = parser.parse_known_args()
 
+    # file checking tools
+    if args.readfile:
+        target = os.path.join("datasets", f"{args.readfile}.hdf5")
+        print_structure_by_path(target)
+        return 
+
+    if args.checkfile:
+        target = os.path.join("datasets", f"{args.checkfile}.hdf5")
+        visualize_hdf5_cameras_by_path(target, frame_idx=args.index)
+        return
+    
+    print("Starting Isaac Sim Environment...")
+    from isaacsim import SimulationApp
+    simulation_app = SimulationApp({"headless": False})
+
+    from omni.isaac.core import World
+    from omni.isaac.core.utils.stage import open_stage, is_stage_loading
+    from configs import robot_config, usd_config
+    from core.input_manager import InputManager
+    from core.robot_controller import FrankaController
+    from core.object_spawner import ObjectSpawner
+    from core.container_manager import ContainerManager
+    from core.termination_manager import TerminationManager
+    from core.data_collector import DataCollector
+    from core.camera_manager import CameraManager
+    
     param_mapping = {
         "mode": "CONTROLLER_MODE",
     }
