@@ -125,8 +125,8 @@ class DataCollector:
             obj_root_vel = np.zeros(6)
             display_name = "none"
             
-            if spawner.spawned_objects:
-                obj_name_id = spawner.spawned_objects[0]
+            if spawner.target_object:
+                obj_name_id = spawner.target_object
                 display_name = self._get_real_name(robot_controller, obj_name_id)
                 scene_obj = robot_controller.world.scene.get_object(obj_name_id)
                 

@@ -20,8 +20,8 @@ class TerminationManager:
         is_obj_inside = False
         inside_obj_name = None
 
-        # Check each spawned object
-        for obj_name in self.object_spawner.spawned_objects:
+        # Check target object only
+        for obj_name in ([self.object_spawner.target_object] if self.object_spawner.target_object else []):
             obj = self.world.scene.get_object(obj_name)
             if obj:
                 pos, _ = obj.get_world_pose()
