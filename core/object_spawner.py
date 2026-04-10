@@ -4,21 +4,30 @@ import random
 from omni.isaac.core.utils.prims import delete_prim, is_prim_path_valid
 from omni.isaac.core.utils.stage import add_reference_to_stage
 from omni.isaac.core.prims import XFormPrim
-from pxr import UsdGeom 
+from pxr import UsdGeom
 from configs import usd_config
+
 
 class ObjectSpawner:
     def __init__(self, world):
         self.world = world
         self.spawned_objects = []
         self.target_object = None
+        self.target_class_name = None  # semantic class name of the target
+
+        # Pre-selected files (shared across two-phase spawn)
+        self._selected_files = []
 
         search_path = os.path.join(usd_config.OBJECTS_DIR, "*.usd")
         self.available_usds = glob.glob(search_path)
         print(f"[ObjectSpawner] Found {len(self.available_usds)} USD files in {usd_config.OBJECTS_DIR}")
 
-    def respawn(self):
-        # Clean existing spawned objects
+    def get_target_class_name(self) -> str:
+        """Return the semantic class name of the target object (USD filename without extension)"""
+        return self.target_class_name
+
+    def _clean_all(self):
+        """Remove all spawned objects"""
         all_managed = self.spawned_objects + ([self.target_object] if self.target_object else [])
         for name in all_managed:
             if self.world.scene.object_exists(name):
@@ -28,19 +37,71 @@ class ObjectSpawner:
                 delete_prim(prim_path)
         self.spawned_objects = []
         self.target_object = None
+        self.target_class_name = None
 
+    def _select_files(self):
+        """Randomly select 4 USD files (3 background + 1 target) and store in _selected_files"""
         if not self.available_usds:
             print("[Warning] No USD files found to spawn!")
+            self._selected_files = []
             return
 
-        # Need 4 objects total: 3 background + 1 target
         total_needed = 4
         if len(self.available_usds) >= total_needed:
-            selected_files = random.sample(self.available_usds, k=total_needed)
+            self._selected_files = random.sample(self.available_usds, k=total_needed)
         else:
-            selected_files = random.choices(self.available_usds, k=total_needed)
+            self._selected_files = random.choices(self.available_usds, k=total_needed)
 
-        # Spawn background objects at point_01 ~ point_03
+    def spawn_target_only(self):
+        """
+        [Phase 1] Spawn only the target object to target_point.
+        Used for baseline capture in occlusion rate calculation.
+        """
+        self._clean_all()
+        self._select_files()
+
+        if not self._selected_files:
+            return
+
+        # Target is the 4th file (index 3)
+        target_usd = self._selected_files[3]
+        self.target_class_name = os.path.splitext(os.path.basename(target_usd))[0]
+
+        target_point_path = f"{usd_config.OBJ_SPAWN_POINT_ROOT}/target_point"
+        if is_prim_path_valid(target_point_path):
+            position, orientation = XFormPrim(target_point_path).get_world_pose()
+            obj_name = "spawned_obj_target"
+            container_path = f"/World/{obj_name}"
+            if is_prim_path_valid(container_path):
+                delete_prim(container_path)
+
+            add_reference_to_stage(usd_path=target_usd, prim_path=container_path)
+            XFormPrim(prim_path=container_path, position=position, orientation=orientation)
+
+            stage = self.world.stage
+            parent_prim = stage.GetPrimAtPath(container_path)
+            target_path = container_path
+            for child in parent_prim.GetChildren():
+                if child.IsA(UsdGeom.Imageable):
+                    target_path = child.GetPath().pathString
+                    break
+
+            real_object_prim = XFormPrim(prim_path=target_path, name=obj_name)
+            self.world.scene.add(real_object_prim)
+            self.target_object = obj_name
+            print(f"[ObjectSpawner] Target spawned: {self.target_class_name} (class for semantic)")
+        else:
+            print(f"[Warning] target_point not found at {target_point_path}")
+
+    def spawn_remaining_objects(self):
+        """
+        [Phase 2] Spawn 3 background objects to point_01 ~ point_03.
+        Call after baseline capture is complete.
+        """
+        if not self._selected_files:
+            print("[Warning] No selected files. Did you call spawn_target_only() first?")
+            return
+
         for i in range(3):
             point_path = f"{usd_config.OBJ_SPAWN_POINT_ROOT}/point_0{i+1}"
             if not is_prim_path_valid(point_path):
@@ -52,7 +113,7 @@ class ObjectSpawner:
             if is_prim_path_valid(container_path):
                 delete_prim(container_path)
 
-            add_reference_to_stage(usd_path=selected_files[i], prim_path=container_path)
+            add_reference_to_stage(usd_path=self._selected_files[i], prim_path=container_path)
             XFormPrim(prim_path=container_path, position=position, orientation=orientation)
 
             stage = self.world.stage
@@ -67,30 +128,14 @@ class ObjectSpawner:
             self.world.scene.add(real_object_prim)
             self.spawned_objects.append(obj_name)
 
-        # Spawn target object at target_point
-        target_point_path = f"{usd_config.OBJ_SPAWN_POINT_ROOT}/target_point"
-        if is_prim_path_valid(target_point_path):
-            position, orientation = XFormPrim(target_point_path).get_world_pose()
-            obj_name = "spawned_obj_target"
-            container_path = f"/World/{obj_name}"
-            if is_prim_path_valid(container_path):
-                delete_prim(container_path)
+        print(f"[ObjectSpawner] Spawned {len(self.spawned_objects)} background objects")
 
-            add_reference_to_stage(usd_path=selected_files[3], prim_path=container_path)
-            XFormPrim(prim_path=container_path, position=position, orientation=orientation)
-
-            stage = self.world.stage
-            parent_prim = stage.GetPrimAtPath(container_path)
-            target_path = container_path
-            for child in parent_prim.GetChildren():
-                if child.IsA(UsdGeom.Imageable):
-                    target_path = child.GetPath().pathString
-                    break
-
-            real_object_prim = XFormPrim(prim_path=target_path, name=obj_name)
-            self.world.scene.add(real_object_prim)
-            self.target_object = obj_name
-        else:
-            print(f"[Warning] target_point not found at {target_point_path}")
-
+    def respawn(self):
+        """
+        Full respawn (backward compatible).
+        Runs sequentially: spawn_target_only -> spawn_remaining_objects.
+        Use this directly if occlusion rate calculation is not needed.
+        """
+        self.spawn_target_only()
+        self.spawn_remaining_objects()
         print(f"[ObjectSpawner] Spawned {len(self.spawned_objects)} background objects + target: {self.target_object}")

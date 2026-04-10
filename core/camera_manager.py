@@ -91,3 +91,27 @@ class CameraManager:
                     data[f"{name}/depth"] = np.zeros((480, 640), dtype=np.uint16)
                     
         return data
+
+    # Occlusion Rate Calculation
+    def get_all_cameras(self) -> dict:
+        """
+        Return a dict {name: Camera} of all RGB cameras.
+        Used for semantic segmentation in occlusion rate calculation.
+        """
+        rgb_cameras = {}
+        for name, sensors in self.cameras.items():
+            if "rgb" in sensors:
+                rgb_cameras[name] = sensors["rgb"]
+        return rgb_cameras
+
+    def enable_semantic_segmentation(self):
+        """
+        Enable semantic segmentation annotator for all RGB cameras.
+        After calling, run several frames of world.step(render=True) to initialize the annotator.
+        """
+        for name, sensors in self.cameras.items():
+            if "rgb" in sensors:
+                try:
+                    sensors["rgb"].add_semantic_segmentation_to_frame()
+                except Exception as e:
+                    print(f"[CameraManager] Failed to enable semantic seg for {name}: {e}")

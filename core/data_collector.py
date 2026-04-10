@@ -6,7 +6,7 @@ from omni.isaac.core.prims import RigidPrim
 from pxr import Usd, UsdPhysics
 
 class DataCollector:
-    def __init__(self, save_dir="datasets", filename="dataset.hdf5",env_name="Default_Scene"):
+    def __init__(self, save_dir="datasets", filename="dataset.hdf5", env_name="Default_Scene"):
         self.save_dir = save_dir
         if not os.path.exists(self.save_dir):
             os.makedirs(self.save_dir)
@@ -23,15 +23,12 @@ class DataCollector:
         with h5py.File(self.filepath, 'a') as f:
             if 'data' not in f:
                 data_group = f.create_group('data')
-                # Global info (Attribute)
                 env_args = {"env_name": env_name} 
                 data_group.attrs['env_args'] = json.dumps(env_args)
                 data_group.attrs['total'] = 0
 
     def _get_real_name(self, robot_controller, spawn_obj_name):
-        """
-        get the actual object name inside the USD (RigidBodyAPI name)
-        """
+        """get the actual object name inside the USD (RigidBodyAPI name)"""
         scene_obj = robot_controller.world.scene.get_object(spawn_obj_name)
         if not scene_obj:
             return spawn_obj_name
@@ -46,7 +43,7 @@ class DataCollector:
         return spawn_obj_name 
     
     def capture_initial_state(self, robot_controller, spawner):
-        """ capture initial state of robot and spawned objects """
+        """capture initial state of robot and spawned objects"""
         snapshot = {
             "robot": {
                 "root_pose": None,
@@ -55,7 +52,6 @@ class DataCollector:
             "objects": {}
         }
         
-        # Init robot state
         pos, quat = robot_controller.franka.get_world_pose()
         snapshot["robot"]["root_pose"] = np.concatenate([pos, quat])
         snapshot["robot"]["root_vel"] = np.concatenate([
@@ -64,7 +60,6 @@ class DataCollector:
         ])
         stage = robot_controller.world.stage
 
-        # Init objects state
         for obj_name in spawner.spawned_objects:
             real_name = self._get_real_name(robot_controller, obj_name)
     
@@ -179,8 +174,17 @@ class DataCollector:
 
             self.current_demo_data.append(frame_data)
 
-    def save_demo(self, controller, spawner, success_obj_name,container_name="container", success=True):
-        """save current demo data to hdf5 file"""
+    def save_demo(self, controller, spawner, success_obj_name,
+                  container_name="container", success=True,
+                  occlusion_rates=None):
+        """
+        save current demo data to hdf5 file
+
+        Args:
+            occlusion_rates: dict from OcclusionCalculator.get_occlusion_rates()
+                             format: {"cam_0": 0.15, "cam_1": 0.32, ...}
+                             pass None to skip recording occlusion rates
+        """
         if len(self.current_demo_data) < 20:
             self.reset_collector()
             return
@@ -189,20 +193,31 @@ class DataCollector:
 
         with h5py.File(self.filepath, 'a') as f:
             root = f['data']
-            # get new demo id
             demo_id = int(root.attrs['total'])
             demo_name = f"demo_{demo_id}"
             demo_group = root.create_group(demo_name)
             
-            # Save demo Attribute
+            # === Save demo Attribute ===
             demo_group.attrs['num_samples'] = len(self.current_demo_data)
             demo_group.attrs['success'] = success
-            demo_group.attrs['language_instruction'] = f"pick up the {display_name} and place it in the {container_name}"
+            demo_group.attrs['language_instruction'] = (
+                f"pick up the {display_name} and place it in the {container_name}"
+            )
+
+            # --- Occlusion Rate Attribute ---
+            if occlusion_rates is not None:
+                valid_rates = [r for r in occlusion_rates.values() if r >= 0]
+                avg_rate = sum(valid_rates) / len(valid_rates) if valid_rates else 0.0
+
+                rounded_rates = {k: round(v, 3) for k, v in occlusion_rates.items()}
+                demo_group.attrs['occlusion_rates'] = json.dumps(rounded_rates)
+                demo_group.attrs['occlusion_rate_avg'] = round(avg_rate, 3)
+                print(f"[DataCollector] Occlusion recorded: avg={round(avg_rate, 3)}, "
+                      f"per_cam={rounded_rates}")
 
             # --- Group initial_state ---
             init_group = demo_group.create_group('initial_state')
 
-            # Robot initial state
             robot_grp = init_group.create_group('articulation/robot')
             first_frame = self.current_demo_data[0]
             robot_grp.create_dataset("joint_position", data=first_frame['joint_pos'].astype(np.float32))
@@ -221,13 +236,12 @@ class DataCollector:
             for frame in self.current_demo_data:
                 all_keys.update(frame.keys())
 
-            # obs group
             obs_group = demo_group.create_group('obs')
             
-            # list to Dataset
             for key in all_keys:
                 data_list = [frame[key] for frame in self.current_demo_data if key in frame]
-                if not data_list: continue
+                if not data_list:
+                    continue
                 
                 data = np.array(data_list)
                 
