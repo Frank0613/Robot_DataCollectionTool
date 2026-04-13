@@ -10,7 +10,10 @@ TARGET_ROBOT_NAME = "Franka"
 EE_FRAME_NAME = "panda_hand"
 
 # Robot movement speed
-MOVE_SPEED = 0.0025 
+MOVE_SPEED = 0.005
+
+# Robot rotation speed (radians per step)
+ROTATE_SPEED = 0.02
 
 # Gripper close speed
 GRIPPER_SPEED = 0.002

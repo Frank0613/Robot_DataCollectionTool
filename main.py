@@ -139,7 +139,8 @@ def main():
 
     print("==========================================")
     print("Successful")
-    print("Move : WASDQE | Gripper : C")
+    print("Move : WASDQE | Rotate : Z/X T/G C/V")
+    print("Gripper : K   | Reset  : R")
     print("==========================================")
 
     needs_reset = False
@@ -155,7 +156,7 @@ def main():
                 needs_reset = False
             
             # Get input
-            delta_pos, gripper_cmd, reset_cmd, is_any_action = input_mgr.get_command()
+            delta_pos, delta_rot, gripper_cmd, reset_cmd, is_any_action = input_mgr.get_command()
             needs_reset = reset_cmd
 
             # Start recording if detect any keyboard action
@@ -164,12 +165,12 @@ def main():
                 data_collector.recording = True
 
             # Apply control
-            controller.apply_control(delta_pos, gripper_cmd)
+            controller.apply_control(delta_pos, gripper_cmd, delta_rot)
             # Update physics
             world.step(render=True)
 
             if data_collector.recording:
-                data_collector.collect_frame(controller, delta_pos, gripper_cmd, spawner, camera_mgr)
+                data_collector.collect_frame(controller, delta_pos, delta_rot, gripper_cmd, spawner, camera_mgr)
 
             # Check termination condition
             is_success, success_obj_name = termination_mgr.check_task_success()

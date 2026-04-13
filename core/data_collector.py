@@ -91,7 +91,7 @@ class DataCollector:
         self.step_counter = 0
         self.recording = False
 
-    def collect_frame(self, robot_controller, delta_pos, gripper_cmd, spawner, camera_manager):
+    def collect_frame(self, robot_controller, delta_pos, delta_rot, gripper_cmd, spawner, camera_manager):
             if robot_controller.franka is None:
                 return
 
@@ -148,6 +148,7 @@ class DataCollector:
             actions = np.zeros(7, dtype=np.float32)
             actions[:3] = delta_pos
             actions[3] = gripper_cmd
+            actions[4:7] = delta_rot
 
             object_vec = np.concatenate([
                 obj_pos, obj_quat, ee_pos, [cur_gripper_width], [0.0, 0.0]

@@ -125,14 +125,23 @@ class _FrankaControllerIK(_BaseFrankaController):
         local_rot_quat = local_rot_r.as_quat() 
         return local_pos, np.array([local_rot_quat[3], local_rot_quat[0], local_rot_quat[1], local_rot_quat[2]])
 
-    def apply_control(self, delta_pos, gripper_cmd):
+    def apply_control(self, delta_pos, gripper_cmd, delta_rot=None):
         current_joints = self.franka.get_joint_positions()
         if current_joints is None: return
 
-        # Logic specific to IK: Update internal target state
+        # Update target position
         if np.linalg.norm(delta_pos) > 0:
             self.target_pos += delta_pos
-        
+
+        # Update target rotation (apply euler delta as quaternion)
+        if delta_rot is not None and np.linalg.norm(delta_rot) > 0:
+            # target_rot is [w, x, y, z], scipy uses [x, y, z, w]
+            r_current = R.from_quat([self.target_rot[1], self.target_rot[2], self.target_rot[3], self.target_rot[0]])
+            r_delta = R.from_euler('xyz', delta_rot)
+            r_new = r_delta * r_current
+            q = r_new.as_quat()  # [x, y, z, w]
+            self.target_rot = np.array([q[3], q[0], q[1], q[2]])
+
         # Calculate IK
         self.update_base_pose()
         ik_results, success = self.kinematics_solver.compute_inverse_kinematics(
@@ -141,7 +150,7 @@ class _FrankaControllerIK(_BaseFrankaController):
             target_orientation=self.target_rot,
             warm_start=current_joints[:7]
         )
-        
+
         if success:
             action = np.zeros(9)
             action[:7] = ik_results
@@ -205,20 +214,21 @@ class _FrankaControllerRMP(_BaseFrankaController):
         if hasattr(self, "target_visualizer"):
             self.target_visualizer.set_visibility(False)
 
-    def apply_control(self, delta_pos, gripper_cmd):
+    def apply_control(self, delta_pos, gripper_cmd, delta_rot=None):
         base_pos, base_rot = self.franka.get_world_pose()
         self._rmpflow.set_robot_base_pose(base_pos, base_rot)
 
         # Handle First Frame Latch
         if self._first_frame:
-            current_pos, _ = self.ee_prim.get_world_pose()
+            current_pos, current_rot = self.ee_prim.get_world_pose()
             if np.linalg.norm(current_pos) < 0.1: return
             self.target_pos = current_pos
+            self.target_rot = current_rot
             self._rmpflow.set_end_effector_target(self.target_pos, self.target_rot)
             self.target_visualizer.set_world_pose(position=self.target_pos)
             self.target_visualizer.set_visibility(True)
             self._first_frame = False
-            return 
+            return
 
         # Update Target
         if self.target_pos is not None:
@@ -226,9 +236,17 @@ class _FrankaControllerRMP(_BaseFrankaController):
                 self.target_pos += delta_pos
                 self.target_visualizer.set_world_pose(position=self.target_pos)
 
+            # Update target rotation
+            if delta_rot is not None and np.linalg.norm(delta_rot) > 0:
+                r_current = R.from_quat([self.target_rot[1], self.target_rot[2], self.target_rot[3], self.target_rot[0]])
+                r_delta = R.from_euler('xyz', delta_rot)
+                r_new = r_delta * r_current
+                q = r_new.as_quat()  # [x, y, z, w]
+                self.target_rot = np.array([q[3], q[0], q[1], q[2]])
+
             self._rmpflow.set_end_effector_target(
                 target_position=self.target_pos,
-                target_orientation=None 
+                target_orientation=self.target_rot
             )
             self._rmpflow.update_world()
             
