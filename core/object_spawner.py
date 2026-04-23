@@ -14,6 +14,7 @@ class ObjectSpawner:
         self.spawned_objects = []
         self.target_object = None
         self.target_class_name = None  # semantic class name of the target
+        self.bg_class_by_point = {}    # {"point_right": "ramekin", ...}
 
         # Pre-selected files (shared across two-phase spawn)
         self._selected_files = []
@@ -38,6 +39,7 @@ class ObjectSpawner:
         self.spawned_objects = []
         self.target_object = None
         self.target_class_name = None
+        self.bg_class_by_point = {}
 
     def _select_files(self):
         """Randomly select 4 USD files (3 background + 1 target) and store in _selected_files"""
@@ -46,7 +48,7 @@ class ObjectSpawner:
             self._selected_files = []
             return
 
-        total_needed = 4
+        total_needed = len(usd_config.BG_SPAWN_POINTS) + 1
         if len(self.available_usds) >= total_needed:
             self._selected_files = random.sample(self.available_usds, k=total_needed)
         else:
@@ -63,8 +65,8 @@ class ObjectSpawner:
         if not self._selected_files:
             return
 
-        # Target is the 4th file (index 3)
-        target_usd = self._selected_files[3]
+        # Target is the last file; preceding files go to background points
+        target_usd = self._selected_files[-1]
         self.target_class_name = os.path.splitext(os.path.basename(target_usd))[0]
 
         target_point_path = f"{usd_config.OBJ_SPAWN_POINT_ROOT}/target_point"
@@ -95,20 +97,23 @@ class ObjectSpawner:
 
     def spawn_remaining_objects(self):
         """
-        [Phase 2] Spawn 3 background objects to point_01 ~ point_03.
+        [Phase 2] Spawn background objects to named points (see usd_config.BG_SPAWN_POINTS).
         Call after baseline capture is complete.
         """
         if not self._selected_files:
             print("[Warning] No selected files. Did you call spawn_target_only() first?")
             return
 
-        for i in range(3):
-            point_path = f"{usd_config.OBJ_SPAWN_POINT_ROOT}/point_0{i+1}"
+        for i, point_name in enumerate(usd_config.BG_SPAWN_POINTS):
+            point_path = f"{usd_config.OBJ_SPAWN_POINT_ROOT}/{point_name}"
             if not is_prim_path_valid(point_path):
+                print(f"[Warning] Spawn point not found: {point_path}, skipping")
                 continue
             position, orientation = XFormPrim(point_path).get_world_pose()
 
-            obj_name = f"spawned_obj_{i}"
+            obj_name = f"spawned_obj_{point_name}"
+            usd_file = self._selected_files[i]
+            self.bg_class_by_point[point_name] = os.path.splitext(os.path.basename(usd_file))[0]
             container_path = f"/World/{obj_name}"
             if is_prim_path_valid(container_path):
                 delete_prim(container_path)

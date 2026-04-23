@@ -4,6 +4,7 @@ import numpy as np
 import json
 from omni.isaac.core.prims import RigidPrim
 from pxr import Usd, UsdPhysics
+from configs import instruction_config
 
 class DataCollector:
     def __init__(self, save_dir="datasets", filename="dataset.hdf5", env_name="Default_Scene"):
@@ -175,6 +176,9 @@ class DataCollector:
 
             self.current_demo_data.append(frame_data)
 
+    def _get_spawner_bg_map(self, spawner):
+        return getattr(spawner, "bg_class_by_point", {}) or {}
+
     def save_demo(self, controller, spawner, success_obj_name,
                   container_name="container", success=True,
                   occlusion_rates=None):
@@ -201,9 +205,13 @@ class DataCollector:
             # === Save demo Attribute ===
             demo_group.attrs['num_samples'] = len(self.current_demo_data)
             demo_group.attrs['success'] = success
-            demo_group.attrs['language_instruction'] = (
-                f"pick up the {display_name} and place it in the {container_name}"
+            instr_text, tmpl_key = instruction_config.build_instruction(
+                obj=display_name,
+                container=container_name,
+                bg_class_by_point=self._get_spawner_bg_map(spawner),
             )
+            demo_group.attrs['language_instruction'] = instr_text
+            demo_group.attrs['instruction_template'] = tmpl_key
 
             # --- Occlusion Rate Attribute ---
             if occlusion_rates is not None:

@@ -13,6 +13,9 @@ USD_PATH = os.path.join(
 # Target Objects
 OBJECTS_DIR = os.path.join(BASE_DIR, "usdfiles", "objects")
 OBJ_SPAWN_POINT_ROOT = "/World/target_points"
+# Background spawn points (named by position relative to target).
+# Rename scene prims to match. Missing points are skipped.
+BG_SPAWN_POINTS = ["point_right", "point_left", "point_front"]
 
 # Container 
 CONTAINER_CONFIG_PATH = os.path.join(BASE_DIR, "configs", "container_config.json")
