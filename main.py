@@ -14,6 +14,9 @@ def main():
     parser.add_argument("--readfile", type=str)
     parser.add_argument("--checkfile", type=str)
     parser.add_argument("--index", type=int, default=0)
+    parser.add_argument("--repeat", type=int, default=None,
+                        help="Repeat the task N times with the same object layout before re-randomizing. "
+                             "Omit to randomize every reset.")
     args, unknown = parser.parse_known_args()
 
     # file checking tools
@@ -72,7 +75,7 @@ def main():
     # Init controller & Input
     controller = FrankaController(world)
     input_mgr = InputManager()
-    spawner = ObjectSpawner(world)
+    spawner = ObjectSpawner(world, repeat_count=args.repeat)
     container_mgr = ContainerManager(world)
     termination_mgr = TerminationManager(world, container_mgr, spawner, controller)
     data_collector = DataCollector(env_name=env_name)
@@ -178,13 +181,14 @@ def main():
                 container_info = container_mgr.get_container_info()
                 c_name = container_info.get("name", "container")
                 data_collector.save_demo(
-                    controller, 
-                    spawner, 
+                    controller,
+                    spawner,
                     success_obj_name,
-                    container_name=c_name, 
+                    container_name=c_name,
                     success=True,
                     occlusion_rates=current_occlusion_rates  # pass occlusion rates
                 )
+                spawner.notify_task_success()
                 needs_reset = True
         else:
             needs_reset = True

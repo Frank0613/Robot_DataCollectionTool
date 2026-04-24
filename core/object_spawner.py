@@ -9,7 +9,7 @@ from configs import usd_config
 
 
 class ObjectSpawner:
-    def __init__(self, world):
+    def __init__(self, world, repeat_count=None):
         self.world = world
         self.spawned_objects = []
         self.target_object = None
@@ -18,6 +18,13 @@ class ObjectSpawner:
 
         # Pre-selected files (shared across two-phase spawn)
         self._selected_files = []
+
+        # Repeat control: if set, reuse the same selection for `repeat_count`
+        # successful demos before re-randomizing. None -> randomize every reset.
+        # Only successful task completions advance the cycle; manual R resets
+        # keep the current selection without consuming the counter.
+        self.repeat_count = repeat_count
+        self._success_count = 0
 
         search_path = os.path.join(usd_config.OBJECTS_DIR, "*.usd")
         self.available_usds = glob.glob(search_path)
@@ -41,8 +48,28 @@ class ObjectSpawner:
         self.target_class_name = None
         self.bg_class_by_point = {}
 
+    def notify_task_success(self):
+        """Advance the repeat cycle by one. Call after a demo is successfully saved."""
+        if self.repeat_count:
+            self._success_count += 1
+
     def _select_files(self):
-        """Randomly select 4 USD files (3 background + 1 target) and store in _selected_files"""
+        """Randomly select 4 USD files (3 background + 1 target) and store in _selected_files.
+
+        When repeat_count is set, the same selection is reused until the user has
+        collected `repeat_count` successful demos; then it re-randomizes.
+        Manual R resets reuse the current selection without consuming the counter.
+        """
+        should_reuse = (
+            self.repeat_count is not None
+            and self._selected_files
+            and self._success_count < self.repeat_count
+        )
+        if should_reuse:
+            iteration = self._success_count + 1
+            print(f"[ObjectSpawner] Reusing selection (iteration {iteration}/{self.repeat_count})")
+            return
+
         if not self.available_usds:
             print("[Warning] No USD files found to spawn!")
             self._selected_files = []
@@ -53,6 +80,10 @@ class ObjectSpawner:
             self._selected_files = random.sample(self.available_usds, k=total_needed)
         else:
             self._selected_files = random.choices(self.available_usds, k=total_needed)
+
+        self._success_count = 0
+        if self.repeat_count:
+            print(f"[ObjectSpawner] New random selection (iteration 1/{self.repeat_count})")
 
     def spawn_target_only(self):
         """
