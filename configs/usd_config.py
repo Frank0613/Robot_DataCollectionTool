@@ -17,7 +17,6 @@ OBJ_SPAWN_POINT_ROOT = "/World/target_points"
 # Rename scene prims to match. Missing points are skipped.
 BG_SPAWN_POINTS = ["point_right", "point_left", "point_front"]
 
-# Container 
-CONTAINER_CONFIG_PATH = os.path.join(BASE_DIR, "configs", "container_config.json")
-CONTAINER_POINT_PATH = "/World/target_points/container_pos" 
+# Container
+CONTAINER_POINT_PATH = "/World/target_points/container_pos"
 CONTAINER_PRIM_PATH = "/World/Container"

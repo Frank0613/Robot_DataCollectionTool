@@ -15,6 +15,9 @@ MOVE_SPEED = 0.005
 # Robot rotation speed (radians per step)
 ROTATE_SPEED = 0.02
 
+# Show the IK/RMP target ball in the scene. Toggled via `--debug` on the CLI.
+DEBUG_VISUALIZE_TARGET = False
+
 # Gripper close speed
 GRIPPER_SPEED = 0.002
 

@@ -38,10 +38,21 @@ class _BaseFrankaController:
             print("Init EE failed")
         self.ee_prim = RigidPrim(prim_path=ee_path, name="end_effector")
 
+        # Debug target visualizer (shared by IK and RMP, toggled via --debug)
+        self.target_visualizer = VisualSphere(
+            prim_path="/World/target_visualizer",
+            name="target_visualizer",
+            position=np.array([0.0, 0.0, 0.0]),
+            scale=np.array([0.03, 0.03, 0.03]),
+            color=np.array([1.0, 0.0, 0.0]),
+            visible=False,
+        )
+        self.world.scene.add(self.target_visualizer)
+
         # Common State
         self.target_pos = None
         self.target_rot = None
-        self.gripper_state = 1.0 
+        self.gripper_state = 1.0
         self.current_gripper_width = 0.04
 
     def Find_Robot(self, root_path, target_name):
@@ -109,9 +120,18 @@ class _FrankaControllerIK(_BaseFrankaController):
         self.update_base_pose()
         curr_pos, curr_rot = self.ee_prim.get_world_pose()
         self.target_pos, self.target_rot = self.world_to_local(curr_pos, curr_rot)
+        if robot_config.DEBUG_VISUALIZE_TARGET:
+            self.target_visualizer.set_world_pose(position=curr_pos)
+            self.target_visualizer.set_visibility(True)
+        else:
+            self.target_visualizer.set_visibility(False)
 
     def update_base_pose(self):
         self.robot_base_pos, self.robot_base_rot = self.franka.get_world_pose()
+
+    def _local_pos_to_world(self, local_pos):
+        r_base = R.from_quat([self.robot_base_rot[1], self.robot_base_rot[2], self.robot_base_rot[3], self.robot_base_rot[0]])
+        return self.robot_base_pos + r_base.apply(local_pos)
 
     def world_to_local(self, world_pos, world_quat):
         if self.robot_base_pos is None: self.update_base_pose()
@@ -129,6 +149,10 @@ class _FrankaControllerIK(_BaseFrankaController):
         current_joints = self.franka.get_joint_positions()
         if current_joints is None: return
 
+        # Snapshot last reachable target so we can roll back if IK fails
+        prev_target_pos = self.target_pos.copy()
+        prev_target_rot = self.target_rot.copy()
+
         # Update target position
         if np.linalg.norm(delta_pos) > 0:
             self.target_pos += delta_pos
@@ -142,8 +166,10 @@ class _FrankaControllerIK(_BaseFrankaController):
             q = r_new.as_quat()  # [x, y, z, w]
             self.target_rot = np.array([q[3], q[0], q[1], q[2]])
 
-        # Calculate IK
+        # Refresh base pose so world<->local conversions are current
         self.update_base_pose()
+
+        # Calculate IK
         ik_results, success = self.kinematics_solver.compute_inverse_kinematics(
             frame_name=robot_config.EE_FRAME_NAME,
             target_position=self.target_pos,
@@ -158,8 +184,14 @@ class _FrankaControllerIK(_BaseFrankaController):
             action[7] = gripper_width
             action[8] = gripper_width
             self.franka.apply_action(ArticulationAction(joint_positions=action))
+
+            if robot_config.DEBUG_VISUALIZE_TARGET:
+                self.target_visualizer.set_world_pose(position=self._local_pos_to_world(self.target_pos))
         else:
-            print(f"IK failed | Target: {self.target_pos}")
+            # Roll back to the last reachable pose; the marker also stays put
+            # (it was last drawn at prev_target_pos, so we leave it untouched).
+            self.target_pos = prev_target_pos
+            self.target_rot = prev_target_rot
 
 
 # RMPFlow Controller Implementation
@@ -176,17 +208,6 @@ class _FrankaControllerRMP(_BaseFrankaController):
             color=np.array([0.8, 0.8, 0.8])     
         )
         self.world.scene.add(self.obstacle)
-
-        # Visualizer
-        self.target_visualizer = VisualSphere(
-            prim_path="/World/target_visualizer",
-            name="target_visualizer",
-            position=np.array([0, 0, 0]), 
-            scale=np.array([0.03, 0.03, 0.03]),
-            color=np.array([1.0, 0.0, 0.0]),
-            visible=False 
-        )
-        self.world.scene.add(self.target_visualizer)
 
         self._setup_rmpflow()
         self._rmpflow.add_obstacle(self.obstacle)
@@ -225,8 +246,9 @@ class _FrankaControllerRMP(_BaseFrankaController):
             self.target_pos = current_pos
             self.target_rot = current_rot
             self._rmpflow.set_end_effector_target(self.target_pos, self.target_rot)
-            self.target_visualizer.set_world_pose(position=self.target_pos)
-            self.target_visualizer.set_visibility(True)
+            if robot_config.DEBUG_VISUALIZE_TARGET:
+                self.target_visualizer.set_world_pose(position=self.target_pos)
+                self.target_visualizer.set_visibility(True)
             self._first_frame = False
             return
 
@@ -234,7 +256,8 @@ class _FrankaControllerRMP(_BaseFrankaController):
         if self.target_pos is not None:
             if np.linalg.norm(delta_pos) > 0:
                 self.target_pos += delta_pos
-                self.target_visualizer.set_world_pose(position=self.target_pos)
+                if robot_config.DEBUG_VISUALIZE_TARGET:
+                    self.target_visualizer.set_world_pose(position=self.target_pos)
 
             # Update target rotation
             if delta_rot is not None and np.linalg.norm(delta_rot) > 0:

@@ -17,6 +17,8 @@ def main():
     parser.add_argument("--repeat", type=int, default=None,
                         help="Repeat the task N times with the same object layout before re-randomizing. "
                              "Omit to randomize every reset.")
+    parser.add_argument("--debug", action="store_true",
+                        help="Visualize the IK/RMP target ball in the scene.")
     args, unknown = parser.parse_known_args()
 
     # file checking tools
@@ -54,6 +56,8 @@ def main():
         val = getattr(args, cli_arg, None)
         if val is not None:
             setattr(robot_config, config_var, val)
+    if args.debug:
+        robot_config.DEBUG_VISUALIZE_TARGET = True
     if args.scene:
         usd_config.SCENE_NAME = args.scene
         usd_config.USD_PATH = os.path.join(
