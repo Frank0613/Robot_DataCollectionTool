@@ -1,5 +1,5 @@
 # Switch template here before a collection run
-ACTIVE_TEMPLATE = "next_to_right"
+ACTIVE_TEMPLATE = "center"
 
 
 TEMPLATES = {
@@ -10,6 +10,11 @@ TEMPLATES = {
     "next_to_left":  "pick up the {obj} next to the {left} and place it on the {container}",
     "behind_named":  "pick up the {obj} behind the {front} and place it on the {container}",
     "between_named": "pick up the {obj} between the {left} and the {right} and place it on the {container}",
+
+    "cabinet_pick":       "pick up the {obj} from the cabinet and place it on the {container}",
+    "cabinet_open":       "open the cabinet and pick up the {obj} and place it on the {container}",
+
+    
 }
 
 # Which point name (from usd_config.BG_SPAWN_POINTS) each slot maps to

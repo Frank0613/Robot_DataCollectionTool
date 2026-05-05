@@ -37,6 +37,7 @@ def main():
     from omni.isaac.core import World
     from omni.isaac.core.utils.stage import open_stage, is_stage_loading
     from configs import robot_config, usd_config
+    from configs.instruction_config import ACTIVE_TEMPLATE
     from core.input_manager import InputManager
     from core.robot_controller import FrankaController
     from core.object_spawner import ObjectSpawner
@@ -61,6 +62,15 @@ def main():
             "scenes",
             f"{usd_config.SCENE_NAME}.usd"
         )
+
+    if ACTIVE_TEMPLATE.startswith("cabinet") and not usd_config.SCENE_NAME.endswith("cabinet"):
+        print(
+            f"\033[91m[ERROR] ACTIVE_TEMPLATE='{ACTIVE_TEMPLATE}' expects a cabinet scene, "
+            f"but --scene='{usd_config.SCENE_NAME}' does not end with 'cabinet' "
+            f"(e.g. 'home_cabinet'). Aborting.\033[0m"
+        )
+        simulation_app.close()
+        sys.exit(1)
 
     # Load scene
     print(f"Loading Scene: {usd_config.USD_PATH}")
