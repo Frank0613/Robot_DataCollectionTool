@@ -13,6 +13,11 @@ class ContainerManager:
         self.container_prim = None
         self._interior_spec = None
 
+        # Knob-task state (populated on respawn if the active container has a knob spec)
+        self._knob_subpath = None
+        self._knob_threshold_rad = None
+        self._knob_baseline_quat = None
+
     def get_container_info(self, key=None):
         return get_container_info(key)
 
@@ -51,6 +56,22 @@ class ContainerManager:
         mode = self._interior_spec if isinstance(self._interior_spec, str) else "local_box"
         print(f"[ContainerManager] Spawned '{name}' (interior={mode})")
 
+        # Reset and (re)capture knob baseline if this container has a knob spec
+        self._knob_subpath = None
+        self._knob_threshold_rad = None
+        self._knob_baseline_quat = None
+        knob_spec = info.get("knob")
+        if knob_spec:
+            self._knob_subpath = knob_spec.get("subpath", "")
+            self._knob_threshold_rad = float(np.deg2rad(knob_spec.get("threshold_deg", 30.0)))
+            _, baseline_quat = self._get_knob_world_pose()
+            if baseline_quat is None:
+                print(f"[ContainerManager] Warning: knob sub-prim '{self._knob_subpath}' not found")
+            else:
+                self._knob_baseline_quat = baseline_quat
+                print(f"[ContainerManager] Knob baseline saved "
+                      f"(subpath='{self._knob_subpath}', threshold={knob_spec.get('threshold_deg', 30.0)}°)")
+
     def is_inside(self, object_pos):
         """
         Check if object_pos lies inside the container's valid drop zone.
@@ -83,6 +104,62 @@ class ContainerManager:
         in_y = min_p[1] <= y <= max_p[1]
         in_z = min_p[2] <= z <= max_p[2] + 0.5
         return in_x and in_y and in_z
+
+    def _get_knob_world_pose(self):
+        """Return (pos, quat) for the knob in world space, both np.arrays.
+        Reads live state via XFormPrim so physics-driven rotation is captured.
+        Returns (None, None) if the knob is not configured or not found.
+        """
+        if not self._knob_subpath or self.container_prim is None:
+            return None, None
+        knob_path = self.container_prim.prim_path.rstrip("/") + "/" + self._knob_subpath.lstrip("/")
+        if not prim_utils.is_prim_path_valid(knob_path):
+            return None, None
+        pos, quat = XFormPrim(prim_path=knob_path).get_world_pose()
+        return np.asarray(pos, dtype=np.float64), np.asarray(quat, dtype=np.float64)
+
+    def _knob_z_angle_delta(self):
+        """Relative rotation around world-z (radians) between current knob pose
+        and the baseline captured at spawn. None if no baseline available.
+        """
+        if self._knob_baseline_quat is None:
+            return None
+        _, cur = self._get_knob_world_pose()
+        if cur is None:
+            return None
+        # q_rel = q_baseline^-1 * q_current  (Hamilton product, baseline conjugated)
+        wb, xb, yb, zb = self._knob_baseline_quat
+        wc, xc, yc, zc = cur
+        wbi, xbi, ybi, zbi = wb, -xb, -yb, -zb
+        w_rel = wbi*wc - xbi*xc - ybi*yc - zbi*zc
+        z_rel = wbi*zc + xbi*yc - ybi*xc + zbi*wc
+        # Twist around world-z: angle = 2 * atan2(z, w)
+        return 2.0 * float(np.arctan2(z_rel, w_rel))
+
+    def is_knob_turned(self):
+        """True iff |z-axis rotation delta| >= threshold_deg (configured per container)."""
+        if self._knob_threshold_rad is None:
+            return False
+        delta = self._knob_z_angle_delta()
+        if delta is None:
+            return False
+        return abs(delta) >= self._knob_threshold_rad
+
+    def get_knob_state(self):
+        """Live knob state for HDF5 logging. Returns dict or None if no knob configured.
+        Keys: world_pos (3,), world_quat (4, w-first), angle_rad (z-axis delta from baseline).
+        """
+        if self._knob_baseline_quat is None:
+            return None
+        pos, quat = self._get_knob_world_pose()
+        if pos is None:
+            return None
+        delta = self._knob_z_angle_delta()
+        return {
+            "world_pos":  pos,
+            "world_quat": quat,
+            "angle_rad":  float(delta) if delta is not None else 0.0,
+        }
 
     def _is_inside_local_box(self, object_pos, spec):
         anchor_subpath = spec.get("anchor_subpath")

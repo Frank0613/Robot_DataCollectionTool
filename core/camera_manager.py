@@ -55,7 +55,7 @@ class CameraManager:
             # Init RGB camera
             if prim_utils.is_prim_path_valid(rgb_path):
                 try:
-                    rgb_cam = Camera(prim_path=rgb_path, resolution=(640, 480))
+                    rgb_cam = Camera(prim_path=rgb_path, resolution=(256, 256))
                     rgb_cam.initialize()
                     self.cameras[name]["rgb"] = rgb_cam
                 except Exception as e:
@@ -64,7 +64,7 @@ class CameraManager:
             # Init Depth camera
             if prim_utils.is_prim_path_valid(depth_path):
                 try:
-                    depth_cam = Camera(prim_path=depth_path, resolution=(640, 480))
+                    depth_cam = Camera(prim_path=depth_path, resolution=(256, 256))
                     depth_cam.initialize()
                     depth_cam.add_distance_to_image_plane_to_frame()
                     
@@ -88,7 +88,7 @@ class CameraManager:
                     depth_clipped = np.clip(depth_processed, 0, 10.0)
                     data[f"{name}/depth"] = (depth_clipped * 1000).astype(np.uint16)
                 else:
-                    data[f"{name}/depth"] = np.zeros((480, 640), dtype=np.uint16)
+                    data[f"{name}/depth"] = np.zeros((256, 256), dtype=np.uint16)
                     
         return data
 

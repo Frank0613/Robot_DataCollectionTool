@@ -29,7 +29,26 @@ CONTAINERS = {
             "anchor_subpath": None,
             "offset":    (0.0, 0.0, 0.01),
             "half_size": (0.12, 0.12, 0.005),
-            "z_tolerance_above": 0.15,
+            "z_tolerance_above": 0.1,
+        },
+    },
+    "stove": {
+        "name": "stove",
+        "path": "usdfiles/containers/stove.usd",
+        "interior": {
+            "anchor_subpath": None,
+            # Box is centered at offset (in stove-local frame), with full size
+            # (0.5, 0.7, 0.05) -> half_size (0.25, 0.35, 0.025).
+            "offset":    (0.025, 0.0, 0.005),
+            "half_size": (0.25, 0.35, 0.025),
+            "z_tolerance_above": 0.1,
+        },
+        # Optional: enables the "turn_knob" instruction template. Success when
+        # the knob sub-prim has rotated past `threshold_deg` from its baseline
+        # (captured at spawn). See "knob spec" notes at the bottom of this file.
+        "knob": {
+            "subpath": "/knob_center",
+            "threshold_deg": 30.0,
         },
     },
 }
@@ -106,4 +125,13 @@ def get_container_info(key: str | None = None) -> dict:
 #   5. To verify, temporarily print(local_pt) inside ContainerManager.is_inside()
 #      and drop the object on the container — the printed coords show where the
 #      box should land.
+# =============================================================================
+# Optional knob spec (for the "turn_knob" instruction template)
+# =============================================================================
+#   subpath        : sub-prim path to the rotating knob, relative to the
+#                    container root (e.g. "/knob_center"). Must start with "/".
+#   threshold_deg  : success when the knob has rotated this many degrees away
+#                    from its baseline pose (captured at container spawn).
+#                    The angle is the total quaternion delta, so it works
+#                    regardless of which axis the knob actually rotates around.
 # =============================================================================

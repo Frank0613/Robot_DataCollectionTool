@@ -40,6 +40,7 @@ def main():
     from omni.isaac.core.utils.stage import open_stage, is_stage_loading
     from configs import robot_config, usd_config
     from configs.instruction_config import ACTIVE_TEMPLATE
+    from configs.container_config import ACTIVE_CONTAINER
     from core.input_manager import InputManager
     from core.robot_controller import FrankaController
     from core.object_spawner import ObjectSpawner
@@ -72,6 +73,15 @@ def main():
             f"\033[91m[ERROR] ACTIVE_TEMPLATE='{ACTIVE_TEMPLATE}' expects a cabinet scene, "
             f"but --scene='{usd_config.SCENE_NAME}' does not end with 'cabinet' "
             f"(e.g. 'home_cabinet'). Aborting.\033[0m"
+        )
+        simulation_app.close()
+        sys.exit(1)
+
+    if ACTIVE_TEMPLATE.startswith("stove") and ACTIVE_CONTAINER != "stove":
+        print(
+            f"\033[91m[ERROR] ACTIVE_TEMPLATE='{ACTIVE_TEMPLATE}' requires "
+            f"ACTIVE_CONTAINER='stove' (in configs/container_config.py), "
+            f"but got '{ACTIVE_CONTAINER}'. Aborting.\033[0m"
         )
         simulation_app.close()
         sys.exit(1)
@@ -187,7 +197,7 @@ def main():
             world.step(render=True)
 
             if data_collector.recording:
-                data_collector.collect_frame(controller, delta_pos, delta_rot, gripper_cmd, spawner, camera_mgr)
+                data_collector.collect_frame(controller, delta_pos, delta_rot, gripper_cmd, spawner, camera_mgr, container_mgr)
 
             # Check termination condition
             is_success, success_obj_name = termination_mgr.check_task_success()

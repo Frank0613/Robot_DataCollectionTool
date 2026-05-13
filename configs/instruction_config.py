@@ -11,10 +11,13 @@ TEMPLATES = {
     "behind_named":  "pick up the {obj} behind the {front} and place it on the {container}",
     "between_named": "pick up the {obj} between the {left} and the {right} and place it on the {container}",
 
-    "cabinet_pick":       "pick up the {obj} from the cabinet and place it on the {container}",
+    "cabinet_place":       "pick up the {obj} from the cabinet and place it on the {container}",
     "cabinet_open":       "open the cabinet and pick up the {obj} and place it on the {container}",
 
-    
+    # Knob task: success criterion is the knob rotating past its threshold,
+    # not placing an object. {obj} is unused so it can be omitted from the text.
+    "stove_turn":          "turn the knob on the {container}",
+    "stove_place":          "pick up the {obj} and place it on the {container}",
 }
 
 # Which point name (from usd_config.BG_SPAWN_POINTS) each slot maps to
@@ -23,6 +26,17 @@ POINT_SLOT_MAP = {
     "left":  "point_left",
     "front": "point_front",
 }
+
+# Maps template name -> success criterion used by TerminationManager.
+# Templates not listed here default to "place_in_container".
+TEMPLATE_TASKS = {
+    "stove_turn": "turn_knob",
+}
+
+
+def get_task_type(template_name: str | None = None) -> str:
+    name = template_name if template_name is not None else ACTIVE_TEMPLATE
+    return TEMPLATE_TASKS.get(name, "place_in_container")
 
 
 def build_instruction(obj: str, container: str, bg_class_by_point: dict | None = None) -> tuple[str, str]:

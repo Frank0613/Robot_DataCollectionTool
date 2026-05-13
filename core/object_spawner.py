@@ -5,7 +5,7 @@ from omni.isaac.core.utils.prims import delete_prim, is_prim_path_valid
 from omni.isaac.core.utils.stage import add_reference_to_stage
 from omni.isaac.core.prims import XFormPrim
 from pxr import UsdGeom
-from configs import usd_config
+from configs import usd_config, instruction_config
 
 
 class ObjectSpawner:
@@ -135,7 +135,14 @@ class ObjectSpawner:
             print("[Warning] No selected files. Did you call spawn_target_only() first?")
             return
 
+        # Stove tasks place the container in front of the robot, so we skip
+        # the front spawn point to avoid clashing with the stove geometry.
+        skip_front = instruction_config.ACTIVE_TEMPLATE.startswith("stove")
+
         for i, point_name in enumerate(usd_config.BG_SPAWN_POINTS):
+            if skip_front and point_name == "point_front":
+                print(f"[ObjectSpawner] Skipping {point_name} for stove task")
+                continue
             point_path = f"{usd_config.OBJ_SPAWN_POINT_ROOT}/{point_name}"
             if not is_prim_path_valid(point_path):
                 print(f"[Warning] Spawn point not found: {point_path}, skipping")

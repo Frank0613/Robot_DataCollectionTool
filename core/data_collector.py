@@ -92,7 +92,7 @@ class DataCollector:
         self.step_counter = 0
         self.recording = False
 
-    def collect_frame(self, robot_controller, delta_pos, delta_rot, gripper_cmd, spawner, camera_manager):
+    def collect_frame(self, robot_controller, delta_pos, delta_rot, gripper_cmd, spawner, camera_manager, container_manager=None):
             if robot_controller.franka is None:
                 return
 
@@ -169,10 +169,21 @@ class DataCollector:
                 f"states/target_object/{display_name}/root_velocity": obj_root_vel.astype(np.float32)
             }
 
-            # --- Camera Sample rate (30 step) ---
-            if camera_manager and (self.step_counter % 30 == 0):
+            # --- Camera capture every frame ---
+            if camera_manager:
                 cam_data = camera_manager.get_all_camera_data()
                 frame_data.update(cam_data)
+
+            # --- Knob state (only if active container has a knob spec) ---
+            if container_manager is not None:
+                knob_state = container_manager.get_knob_state()
+                if knob_state is not None:
+                    frame_data["states/knob/world_pose"] = np.concatenate(
+                        [knob_state["world_pos"], knob_state["world_quat"]]
+                    ).astype(np.float32)
+                    frame_data["states/knob/angle_deg"] = np.array(
+                        [np.rad2deg(knob_state["angle_rad"])], dtype=np.float32
+                    )
 
             self.current_demo_data.append(frame_data)
 
