@@ -7,24 +7,31 @@ from pxr import Usd, UsdPhysics
 from configs import instruction_config
 
 class DataCollector:
-    def __init__(self, save_dir="datasets", filename="dataset.hdf5", env_name="Default_Scene"):
-        self.save_dir = save_dir
-        if not os.path.exists(self.save_dir):
-            os.makedirs(self.save_dir)
-        
-        self.filepath = os.path.join(self.save_dir, filename)
+    def __init__(self, save_dir="datasets", filename="dataset.hdf5", env_name="Default_Scene", enabled=True):
+        self.enabled = enabled
         self.recording = False
         self.current_demo_data = []
         self.initial_state_snapshot = None
         self.camera_manager = None
         self.step_counter = 0
         self.record_interval = 1
-        
+
+        if not self.enabled:
+            self.save_dir = None
+            self.filepath = None
+            print("[DataCollector] Disabled (inference mode) — no data will be recorded")
+            return
+
+        self.save_dir = save_dir
+        if not os.path.exists(self.save_dir):
+            os.makedirs(self.save_dir)
+        self.filepath = os.path.join(self.save_dir, filename)
+
         # Init file if not exists
         with h5py.File(self.filepath, 'a') as f:
             if 'data' not in f:
                 data_group = f.create_group('data')
-                env_args = {"env_name": env_name} 
+                env_args = {"env_name": env_name}
                 data_group.attrs['env_args'] = json.dumps(env_args)
                 data_group.attrs['total'] = 0
 
@@ -92,7 +99,19 @@ class DataCollector:
         self.step_counter = 0
         self.recording = False
 
+    def get_demo_count(self):
+        """Number of demos already saved to the hdf5 file (0 if disabled / unreadable)."""
+        if not self.enabled or self.filepath is None:
+            return 0
+        try:
+            with h5py.File(self.filepath, 'r') as f:
+                return int(f['data'].attrs.get('total', 0))
+        except Exception:
+            return 0
+
     def collect_frame(self, robot_controller, delta_pos, delta_rot, gripper_cmd, spawner, camera_manager, container_manager=None):
+            if not self.enabled:
+                return
             if robot_controller.franka is None:
                 return
 
@@ -201,6 +220,9 @@ class DataCollector:
                              format: {"cam_0": 0.15, "cam_1": 0.32, ...}
                              pass None to skip recording occlusion rates
         """
+        if not self.enabled:
+            self.reset_collector()
+            return
         if len(self.current_demo_data) < 20:
             self.reset_collector()
             return

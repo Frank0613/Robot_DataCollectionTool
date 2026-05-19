@@ -33,8 +33,36 @@ def print_structure_by_path(file_path):
                 print(f"  {key}: {val}")
             print("-" * 60)
             f.visititems(print_structure)
+            print_success_summary(f)
     except Exception as e:
         print(f"Error: {e}")
+
+
+def print_success_summary(f):
+    """Count success / fail demos and print a summary at the end."""
+    if 'data' not in f:
+        return
+
+    success_count = 0
+    fail_count = 0
+    unknown_count = 0
+    for demo_name in f['data']:
+        demo = f['data'][demo_name]
+        if 'success' in demo.attrs:
+            if bool(demo.attrs['success']):
+                success_count += 1
+            else:
+                fail_count += 1
+        else:
+            unknown_count += 1
+
+    total = success_count + fail_count + unknown_count
+    print("=" * 60)
+    line = f"[Summary] Total demos: {total}  |  Success: {success_count}  |  Fail: {fail_count}"
+    if unknown_count:
+        line += f"  |  No success attr: {unknown_count}"
+    print(line)
+    print("=" * 60)
 
 if __name__ == "__main__":
     FILE_PATH = 'datasets/dataset.hdf5'

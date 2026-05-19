@@ -4,6 +4,7 @@ import sys
 
 from tools.hdf5_reader import print_structure_by_path
 from tools.hdf5_checker import visualize_hdf5_cameras_by_path
+from tools.hdf5_video import visualize_hdf5_demo_as_video
 from core.occlusion_calculator import OcclusionCalculator
 
 
@@ -13,12 +14,18 @@ def main():
     parser.add_argument("--scene", type=str)
     parser.add_argument("--readfile", type=str)
     parser.add_argument("--checkfile", type=str)
+    parser.add_argument("--checkvideo", type=str,
+                        help="Render a whole demo as an MP4 (use with --demo).")
+    parser.add_argument("--demo", type=int, default=0,
+                        help="Demo index for --checkfile and --checkvideo.")
     parser.add_argument("--index", type=int, default=0)
     parser.add_argument("--repeat", type=int, default=None,
                         help="Repeat the task N times with the same object layout before re-randomizing. "
                              "Omit to randomize every reset.")
     parser.add_argument("--debug", action="store_true",
                         help="Visualize the IK/RMP target ball in the scene.")
+    parser.add_argument("--inference", action="store_true",
+                        help="Run without recording any data (for model inference or testing).")
     args, unknown = parser.parse_known_args()
 
     # file checking tools
@@ -29,7 +36,12 @@ def main():
 
     if args.checkfile:
         target = os.path.join("datasets", f"{args.checkfile}.hdf5")
-        visualize_hdf5_cameras_by_path(target, frame_idx=args.index)
+        visualize_hdf5_cameras_by_path(target, demo_idx=args.demo, frame_idx=args.index)
+        return
+
+    if args.checkvideo:
+        target = os.path.join("datasets", f"{args.checkvideo}.hdf5")
+        visualize_hdf5_demo_as_video(target, demo_idx=args.demo)
         return
     
     print("Starting Isaac Sim Environment...")
@@ -102,7 +114,7 @@ def main():
     spawner = ObjectSpawner(world, repeat_count=args.repeat)
     container_mgr = ContainerManager(world)
     termination_mgr = TerminationManager(world, container_mgr, spawner, controller)
-    data_collector = DataCollector(env_name=env_name)
+    data_collector = DataCollector(env_name=env_name, enabled=not args.inference)
     camera_mgr = CameraManager()
 
     # ============================================
@@ -121,14 +133,14 @@ def main():
         spawner.spawn_target_only()
         container_mgr.respawn()
 
-        for _ in range(15):
+        for _ in range(8):
             world.step(render=True)
 
         target_class = spawner.get_target_class_name()
         if target_class is None:
             print("[Main] Warning: target_class_name is None, skipping occlusion calc")
             spawner.spawn_remaining_objects()
-            for _ in range(15):
+            for _ in range(8):
                 world.step(render=True)
             current_occlusion_rates = None
             return
@@ -137,25 +149,42 @@ def main():
 
         # Enable semantic segmentation via CameraManager
         camera_mgr.enable_semantic_segmentation()
-        for _ in range(10):
+        for _ in range(5):
             world.step(render=True)
 
-        # Capture baseline
-        occlusion_calc.capture_baseline(camera_mgr)
+        # Capture baseline (multi-sample with renders between for noise robustness)
+        occlusion_calc.capture_baseline(
+            camera_mgr,
+            render_fn=lambda: world.step(render=True),
+            num_samples=5,
+        )
 
         # === Phase 2: spawn remaining objects ===
         spawner.spawn_remaining_objects()
 
-        for _ in range(15):
+        # Match Phase-1 settle time (8 + 5 = 13) for annotator symmetry.
+        for _ in range(13):
             world.step(render=True)
 
-        # Capture after occlusion
-        occlusion_calc.capture_occluded(camera_mgr)
+        # Capture after occlusion (multi-sample with renders between)
+        occlusion_calc.capture_occluded(
+            camera_mgr,
+            render_fn=lambda: world.step(render=True),
+            num_samples=5,
+        )
 
         current_occlusion_rates = occlusion_calc.get_occlusion_rates()
         avg_rate = occlusion_calc.get_avg_occlusion_rate()
         rounded_rates = {k: round(v, 3) for k, v in current_occlusion_rates.items()}
         print(f"[Main] Occlusion calculation done! avg = {avg_rate:.3f}, per_cam = {rounded_rates}")
+
+    def log_demo_status():
+        """Print the current demo count. Called after scene setup so it lands
+        below all the Isaac Sim warnings (same spot as the occlusion log)."""
+        if not data_collector.enabled:
+            return
+        count = data_collector.get_demo_count()
+        print(f"[Main] >>> Demos saved so far: {count}  |  now recording demo #{count + 1} <<<")
 
     # === First initialization ===
     setup_scene_with_occlusion()
@@ -165,10 +194,12 @@ def main():
             world.step(render=False)
 
     print("==========================================")
-    print("Successful")
+    mode_str = "INFERENCE (no recording)" if args.inference else "DATA COLLECTION"
+    print(f"Mode: {mode_str}")
     print("Move : WASDQE | Rotate : Z/X T/G C/V")
-    print("Gripper : K   | Reset  : R")
+    print("Gripper : K   | Reset  : R   | Save Fail : N")
     print("==========================================")
+    log_demo_status()
 
     needs_reset = False
     
@@ -181,13 +212,14 @@ def main():
                 termination_mgr.reset()
                 data_collector.reset_collector()
                 needs_reset = False
+                log_demo_status()
             
             # Get input
-            delta_pos, delta_rot, gripper_cmd, reset_cmd, is_any_action = input_mgr.get_command()
+            delta_pos, delta_rot, gripper_cmd, reset_cmd, fail_cmd, is_any_action = input_mgr.get_command()
             needs_reset = reset_cmd
 
-            # Start recording if detect any keyboard action
-            if not data_collector.recording and is_any_action:
+            # Start recording if detect any keyboard action (only when collecting)
+            if data_collector.enabled and not data_collector.recording and is_any_action:
                 print(" Start Recording...")
                 data_collector.recording = True
 
@@ -198,6 +230,30 @@ def main():
 
             if data_collector.recording:
                 data_collector.collect_frame(controller, delta_pos, delta_rot, gripper_cmd, spawner, camera_mgr, container_mgr)
+                # First frame just landed -> save a preview PNG so the user can
+                # eyeball the camera views and press N/R immediately if broken.
+                if len(data_collector.current_demo_data) == 1:
+                    preview_path = os.path.abspath("preview_recording.png")
+                    saved = camera_mgr.save_current_frame_preview(preview_path)
+                    if saved:
+                        print(f"[Main] First-frame preview saved -> {saved}")
+
+            # Manual fail save (F key): save current demo as failure and reset.
+            # Layout selection is NOT advanced (notify_task_success is skipped) so
+            # the same scene re-rolls until the user gets a successful demo.
+            if fail_cmd and data_collector.recording:
+                container_info = container_mgr.get_container_info()
+                c_name = container_info.get("name", "container")
+                print("[Main] Saving demo as FAILURE (manual)")
+                data_collector.save_demo(
+                    controller,
+                    spawner,
+                    success_obj_name=spawner.target_object,
+                    container_name=c_name,
+                    success=False,
+                    occlusion_rates=current_occlusion_rates,
+                )
+                needs_reset = True
 
             # Check termination condition
             is_success, success_obj_name = termination_mgr.check_task_success()

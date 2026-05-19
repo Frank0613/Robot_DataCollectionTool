@@ -48,9 +48,9 @@ class TerminationManager:
             if self.success_counter > 0:
                 self.success_counter = 0
 
-        if self.success_counter >= 60:
+        if self.success_counter >= 30:
             print("==========================================")
-            print(f"[Task Success] Object '{inside_obj_name}' stable in container for 60 frames!")
+            print(f"[Task Success] Object '{inside_obj_name}' stable in container for 30 frames!")
             print("==========================================")
             return True, inside_obj_name
 
@@ -67,9 +67,9 @@ class TerminationManager:
             if self.success_counter > 0:
                 self.success_counter = 0
 
-        if self.success_counter >= 60:
+        if self.success_counter >= 30:
             print("==========================================")
-            print("[Task Success] Knob turned past threshold for 60 frames!")
+            print("[Task Success] Knob turned past threshold for 30 frames!")
             print("==========================================")
             # save_demo expects an object name; fall back to the spawned target
             # (or None if knob task was run without a target object).

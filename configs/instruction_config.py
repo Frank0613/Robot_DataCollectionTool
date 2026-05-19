@@ -1,5 +1,5 @@
 # Switch template here before a collection run
-ACTIVE_TEMPLATE = "center"
+ACTIVE_TEMPLATE = "custom"
 
 
 TEMPLATES = {
@@ -10,6 +10,7 @@ TEMPLATES = {
     "next_to_left":  "pick up the {obj} next to the {left} and place it on the {container}",
     "behind_named":  "pick up the {obj} behind the {front} and place it on the {container}",
     "between_named": "pick up the {obj} between the {left} and the {right} and place it on the {container}",
+    "custom":      "pick up the {obj} in the top drawer of the white cabinet and place it on the {container}",
 
     "cabinet_place":       "pick up the {obj} from the cabinet and place it on the {container}",
     "cabinet_open":       "open the cabinet and pick up the {obj} and place it on the {container}",

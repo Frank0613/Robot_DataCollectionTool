@@ -12,10 +12,15 @@ class InputManager:
         self.gripper_is_open = True
         self.prev_k_state = False
         self.prev_r_state = False
+        self.prev_n_state = False
 
     def get_command(self):
         """
-        Return delta pos, delta rot, gripper state, reset cmd, is_any_action
+        Return delta pos, delta rot, gripper state, reset cmd, fail cmd, is_any_action.
+        fail_cmd is an edge-triggered signal from the N key, used to save the
+        current demo as a failure and reset. (F is not used because the
+        Omniverse viewport binds it to "Frame Selected", which moves the
+        perspective camera.)
         """
         delta = np.zeros(3)
         delta_rot = np.zeros(3)
@@ -75,4 +80,13 @@ class InputManager:
             reset_cmd = True
         self.prev_r_state = r_pressed
 
-        return delta, delta_rot, gripper_cmd, reset_cmd, is_any_action
+        # Fail Command (N key) - edge triggered. Not counted as is_any_action so
+        # pressing N never *starts* recording, only ends a recording in progress.
+        # (F was avoided because Omniverse binds it to "Frame Selected".)
+        fail_cmd = False
+        n_pressed = self._input.get_keyboard_value(self._keyboard, carb.input.KeyboardInput.N)
+        if n_pressed and not self.prev_n_state:
+            fail_cmd = True
+        self.prev_n_state = n_pressed
+
+        return delta, delta_rot, gripper_cmd, reset_cmd, fail_cmd, is_any_action
