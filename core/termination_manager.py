@@ -1,5 +1,8 @@
 from configs import instruction_config
 
+# Target below this world-Z (meters) is considered fallen to the floor.
+FALL_Z_THRESHOLD = 0.7
+
 
 class TerminationManager:
     def __init__(self, world, container_manager, object_spawner, robot_controller):
@@ -22,6 +25,24 @@ class TerminationManager:
         if task == "turn_knob":
             return self._check_knob_task()
         return self._check_place_task()
+
+    def check_task_failure(self):
+        """
+        Detect automatic failure conditions (used by eval mode so the operator
+        does not have to press N manually). Returns (is_fail, reason).
+
+        Add future fail conditions here, each returning a short reason string.
+        """
+        # Condition 1: target object fell to the floor.
+        target = self.object_spawner.target_object
+        if target:
+            obj = self.world.scene.get_object(target)
+            if obj:
+                pos, _ = obj.get_world_pose()
+                if pos[2] < FALL_Z_THRESHOLD:
+                    return True, f"object fell (z={float(pos[2]):.2f} < {FALL_Z_THRESHOLD})"
+
+        return False, None
 
     def _check_place_task(self):
         """

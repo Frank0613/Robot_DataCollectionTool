@@ -4,6 +4,33 @@ import os
 from matplotlib import cm
 
 
+def compose_camera_grid(cam_data, include_depth=True):
+    """Build one composite image from a {"<cam>/rgb": HxWx3 uint8,
+    "<cam>/depth": HxW uint16} dict — i.e. the output of
+    CameraManager.get_all_camera_data(). With include_depth, a colorized depth
+    row is stacked below the RGB row. Returns an RGB uint8 array, or None if
+    there are no RGB cameras.
+    """
+    rgb_keys = sorted(k for k in cam_data if k.endswith("/rgb"))
+    depth_keys = sorted(k for k in cam_data if k.endswith("/depth"))
+    if not rgb_keys:
+        return None
+
+    rgb_strip = np.hstack([cam_data[k].astype(np.uint8) for k in rgb_keys])
+    if not include_depth or not depth_keys:
+        return rgb_strip
+
+    magma = cm.get_cmap('magma')
+    depth_row = []
+    for k in depth_keys:
+        d = cam_data[k].astype(np.float32)
+        d_min, d_max = float(d.min()), float(d.max())
+        d_norm = (d - d_min) / (d_max - d_min + 1e-5)
+        depth_row.append((magma(d_norm)[..., :3] * 255).astype(np.uint8))
+    depth_strip = np.hstack(depth_row)
+    return np.vstack([rgb_strip, depth_strip])
+
+
 def visualize_hdf5_demo_as_video(file_path, demo_idx=0, output_path=None, fps=30):
     """Render every frame of a demo as a side-by-side RGB + depth grid and
     stitch them into a single MP4. Same layout as tools/hdf5_checker.py but

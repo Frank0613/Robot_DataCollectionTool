@@ -6,6 +6,31 @@ from tools.hdf5_reader import print_structure_by_path
 from tools.hdf5_checker import visualize_hdf5_cameras_by_path
 from tools.hdf5_video import visualize_hdf5_demo_as_video
 from core.occlusion_calculator import OcclusionCalculator
+from core.inference_stats import InferenceStats
+
+
+def _set_render_visibility(stage, path_or_name, visible):
+    """Toggle render visibility of a prim subtree (visibility only — physics
+    colliders are unaffected). Accepts an exact prim path or a bare prim name
+    (searched across the stage). Returns True if a matching prim was found."""
+    from pxr import UsdGeom
+    prim = stage.GetPrimAtPath(path_or_name)
+    if not prim.IsValid():
+        prim = None
+        for p in stage.Traverse():
+            if p.GetName() == path_or_name:
+                prim = p
+                break
+    if prim is None or not prim.IsValid():
+        return False
+    imageable = UsdGeom.Imageable(prim)
+    if not imageable:
+        return False
+    if visible:
+        imageable.MakeVisible()
+    else:
+        imageable.MakeInvisible()
+    return True
 
 
 def main():
@@ -24,8 +49,18 @@ def main():
                              "Omit to randomize every reset.")
     parser.add_argument("--debug", action="store_true",
                         help="Visualize the IK/RMP target ball in the scene.")
-    parser.add_argument("--inference", action="store_true",
-                        help="Run without recording any data (for model inference or testing).")
+    parser.add_argument("--eval", dest="eval_mode", action="store_true",
+                        help="Run without recording any data (for model inference or manual eval).")
+    parser.add_argument("--max-steps", dest="max_steps", type=int, default=None,
+                        help="Per-trial step timeout (eval mode only). Required to enable stats.")
+    parser.add_argument("--trials", type=int, default=None,
+                        help="Total trials before auto-exit (eval mode only). Omit for unlimited.")
+    parser.add_argument("--save_video", action="store_true",
+                        help="Eval mode: save each trial as an MP4 under eval_videos/.")
+    parser.add_argument("--template", type=str, default=None,
+                        help="Override instruction_config.ACTIVE_TEMPLATE for this run.")
+    parser.add_argument("--container", type=str, default=None,
+                        help="Override container_config.ACTIVE_CONTAINER for this run.")
     args, unknown = parser.parse_known_args()
 
     # file checking tools
@@ -50,9 +85,7 @@ def main():
 
     from omni.isaac.core import World
     from omni.isaac.core.utils.stage import open_stage, is_stage_loading
-    from configs import robot_config, usd_config
-    from configs.instruction_config import ACTIVE_TEMPLATE
-    from configs.container_config import ACTIVE_CONTAINER
+    from configs import robot_config, usd_config, instruction_config, container_config
     from core.input_manager import InputManager
     from core.robot_controller import FrankaController
     from core.object_spawner import ObjectSpawner
@@ -80,20 +113,43 @@ def main():
             f"{usd_config.SCENE_NAME}.usd"
         )
 
-    if ACTIVE_TEMPLATE.startswith("cabinet") and not usd_config.SCENE_NAME.endswith("cabinet"):
+    # CLI overrides for the active template / container (avoids editing configs each run)
+    if args.template is not None:
+        if args.template not in instruction_config.TEMPLATES:
+            print(
+                f"\033[91m[ERROR] --template '{args.template}' not in instruction_config.TEMPLATES. "
+                f"Available: {sorted(instruction_config.TEMPLATES.keys())}\033[0m"
+            )
+            simulation_app.close()
+            sys.exit(1)
+        instruction_config.ACTIVE_TEMPLATE = args.template
+
+    if args.container is not None:
+        if args.container not in container_config.CONTAINERS:
+            print(
+                f"\033[91m[ERROR] --container '{args.container}' not in container_config.CONTAINERS. "
+                f"Available: {sorted(container_config.CONTAINERS.keys())}\033[0m"
+            )
+            simulation_app.close()
+            sys.exit(1)
+        container_config.ACTIVE_CONTAINER = args.container
+
+    active_template = instruction_config.ACTIVE_TEMPLATE
+    active_container = container_config.ACTIVE_CONTAINER
+
+    if active_template.startswith("cabinet") and not usd_config.SCENE_NAME.endswith("cabinet"):
         print(
-            f"\033[91m[ERROR] ACTIVE_TEMPLATE='{ACTIVE_TEMPLATE}' expects a cabinet scene, "
+            f"\033[91m[ERROR] ACTIVE_TEMPLATE='{active_template}' expects a cabinet scene, "
             f"but --scene='{usd_config.SCENE_NAME}' does not end with 'cabinet' "
             f"(e.g. 'home_cabinet'). Aborting.\033[0m"
         )
         simulation_app.close()
         sys.exit(1)
 
-    if ACTIVE_TEMPLATE.startswith("stove") and ACTIVE_CONTAINER != "stove":
+    if active_template.startswith("stove") and active_container != "stove":
         print(
-            f"\033[91m[ERROR] ACTIVE_TEMPLATE='{ACTIVE_TEMPLATE}' requires "
-            f"ACTIVE_CONTAINER='stove' (in configs/container_config.py), "
-            f"but got '{ACTIVE_CONTAINER}'. Aborting.\033[0m"
+            f"\033[91m[ERROR] ACTIVE_TEMPLATE='{active_template}' requires "
+            f"ACTIVE_CONTAINER='stove', but got '{active_container}'. Aborting.\033[0m"
         )
         simulation_app.close()
         sys.exit(1)
@@ -114,8 +170,23 @@ def main():
     spawner = ObjectSpawner(world, repeat_count=args.repeat)
     container_mgr = ContainerManager(world)
     termination_mgr = TerminationManager(world, container_mgr, spawner, controller)
-    data_collector = DataCollector(env_name=env_name, enabled=not args.inference)
+    data_collector = DataCollector(env_name=env_name, enabled=not args.eval_mode)
     camera_mgr = CameraManager()
+
+    # Eval/inference trial tracking — enabled when --eval AND any of
+    # {--max-steps, --trials, --save_video} is set. --eval alone keeps the
+    # legacy "no recording, no stats" behavior.
+    if args.save_video and not args.eval_mode:
+        print("[Eval] --save_video ignored: only applies with --eval")
+    trial_tracking = args.eval_mode and (
+        args.max_steps is not None or args.trials is not None or args.save_video
+    )
+    stats = InferenceStats(args.max_steps, args.trials) if trial_tracking else None
+
+    recorder = None
+    if args.eval_mode and args.save_video:
+        from core.trial_video import TrialVideoRecorder
+        recorder = TrialVideoRecorder(out_dir="eval_videos", fps=30)
 
     # ============================================
     # Occlusion rate calculation (run on scene init & every reset)
@@ -127,11 +198,39 @@ def main():
 
         world.reset()
         controller.initialize_handles()
-        camera_mgr.initialize_cameras()
+
+        # Eval mode doesn't record data, so it doesn't need occlusion rates.
+        # Skipping the occlusion calc lets us keep the cameras stable (init
+        # once, never rebuilt) which removes the "empty scene + skybox" flicker
+        # caused by re-creating render products every reset.
+        if args.eval_mode:
+            camera_mgr.initialize_cameras()          # idempotent: build once, stay stable
+            spawner.spawn_target_only()
+            container_mgr.respawn()
+            spawner.spawn_remaining_objects()
+            for _ in range(15):
+                world.step(render=True)
+            current_occlusion_rates = None
+            return
+
+        # Collection mode: rebuild cameras each reset so the semantic
+        # segmentation annotator sees the new scene's labels for occlusion.
+        camera_mgr.initialize_cameras(force=True)
 
         # === Phase 1: spawn target only ===
         spawner.spawn_target_only()
         container_mgr.respawn()
+
+        # Hide static occluders (e.g. white_cabinet) IMMEDIATELY — before any
+        # settle/render — so they are never shown during setup (the target just
+        # looks like it floats). Visibility only -> colliders stay active, so the
+        # target still settles onto the now-invisible surface.
+        hidden = []
+        for name in getattr(usd_config, "OCCLUSION_HIDE_PRIMS", []):
+            if _set_render_visibility(world.stage, name, visible=False):
+                hidden.append(name)
+        if hidden:
+            print(f"[Occlusion] Hidden for baseline: {hidden}")
 
         for _ in range(8):
             world.step(render=True)
@@ -139,6 +238,8 @@ def main():
         target_class = spawner.get_target_class_name()
         if target_class is None:
             print("[Main] Warning: target_class_name is None, skipping occlusion calc")
+            for name in hidden:
+                _set_render_visibility(world.stage, name, visible=True)
             spawner.spawn_remaining_objects()
             for _ in range(8):
                 world.step(render=True)
@@ -158,6 +259,10 @@ def main():
             render_fn=lambda: world.step(render=True),
             num_samples=5,
         )
+
+        # Restore the hidden occluders so they DO count toward occlusion in Phase 2
+        for name in hidden:
+            _set_render_visibility(world.stage, name, visible=True)
 
         # === Phase 2: spawn remaining objects ===
         spawner.spawn_remaining_objects()
@@ -194,10 +299,19 @@ def main():
             world.step(render=False)
 
     print("==========================================")
-    mode_str = "INFERENCE (no recording)" if args.inference else "DATA COLLECTION"
+    if args.eval_mode:
+        mode_str = "EVAL (no recording)"
+        if args.max_steps is not None:
+            mode_str += f" | max_steps={args.max_steps}"
+        if args.trials is not None:
+            mode_str += f" | trials={args.trials}"
+        if args.save_video:
+            mode_str += " | save_video"
+    else:
+        mode_str = "DATA COLLECTION"
     print(f"Mode: {mode_str}")
     print("Move : WASDQE | Rotate : Z/X T/G C/V")
-    print("Gripper : K   | Reset  : R   | Save Fail : N")
+    print("Gripper : K   | Reset  : R   | Save Fail / Eval Fail : N")
     print("==========================================")
     log_demo_status()
 
@@ -213,9 +327,37 @@ def main():
                 data_collector.reset_collector()
                 needs_reset = False
                 log_demo_status()
-            
+                if stats is not None:
+                    # Build the language instruction for THIS trial's layout
+                    # (target class + container + BG slots), store with stats so
+                    # the end-of-run summary can list per-trial details.
+                    tc = spawner.get_target_class_name() or "unknown"
+                    cinfo = container_mgr.get_container_info()
+                    cname = cinfo.get("name", "container")
+                    bg_map = getattr(spawner, "bg_class_by_point", {}) or {}
+                    try:
+                        instr_text, _ = instruction_config.build_instruction(
+                            obj=tc.replace("_", " "),
+                            container=cname,
+                            bg_class_by_point=bg_map,
+                        )
+                    except Exception as e:
+                        instr_text = f"<instruction build failed: {e}>"
+                    stats.start_trial(instruction=instr_text)
+                if recorder is not None:
+                    recorder.start_trial()
+
             # Get input
             delta_pos, delta_rot, gripper_cmd, reset_cmd, fail_cmd, is_any_action = input_mgr.get_command()
+
+            # Eval mode: advance per-trial counter (starts on first action)
+            timed_out = stats.tick(is_any_action) if stats is not None else False
+
+            # R during an active eval trial = redo, don't count
+            if stats is not None and reset_cmd:
+                stats.record("redo")
+                if recorder is not None:
+                    recorder.discard()
             needs_reset = reset_cmd
 
             # Start recording if detect any keyboard action (only when collecting)
@@ -228,6 +370,10 @@ def main():
             # Update physics
             world.step(render=True)
 
+            # Eval video: capture this frame while a trial is active
+            if recorder is not None and stats is not None and stats.trial_active:
+                recorder.capture(camera_mgr.get_all_camera_data())
+
             if data_collector.recording:
                 data_collector.collect_frame(controller, delta_pos, delta_rot, gripper_cmd, spawner, camera_mgr, container_mgr)
                 # First frame just landed -> save a preview PNG so the user can
@@ -238,7 +384,7 @@ def main():
                     if saved:
                         print(f"[Main] First-frame preview saved -> {saved}")
 
-            # Manual fail save (F key): save current demo as failure and reset.
+            # Manual fail save (N key): save current demo as failure and reset.
             # Layout selection is NOT advanced (notify_task_success is skipped) so
             # the same scene re-rolls until the user gets a successful demo.
             if fail_cmd and data_collector.recording:
@@ -255,6 +401,24 @@ def main():
                 )
                 needs_reset = True
 
+            # Eval mode: N key = count this trial as manual fail
+            if stats is not None and fail_cmd:
+                stats.record("manual_fail", reason="manual (N key)")
+                if recorder is not None:
+                    recorder.save("manual_fail")
+                needs_reset = True
+
+            # Eval mode: automatic failure detection (no need to press N).
+            # Only while a trial is active so the object's spawn settle doesn't
+            # trip it. More conditions live in termination_mgr.check_task_failure.
+            if stats is not None and stats.trial_active and not needs_reset:
+                is_fail, fail_reason = termination_mgr.check_task_failure()
+                if is_fail:
+                    stats.record("manual_fail", reason=fail_reason)
+                    if recorder is not None:
+                        recorder.save("manual_fail")
+                    needs_reset = True
+
             # Check termination condition
             is_success, success_obj_name = termination_mgr.check_task_success()
             if not needs_reset and is_success:
@@ -269,11 +433,33 @@ def main():
                     occlusion_rates=current_occlusion_rates  # pass occlusion rates
                 )
                 spawner.notify_task_success()
+                if stats is not None:
+                    stats.record("success")
+                if recorder is not None:
+                    recorder.save("success")
                 needs_reset = True
+
+            # Eval mode: timeout (placed after success so success wins same-frame ties)
+            if stats is not None and timed_out and not needs_reset:
+                stats.record("timeout")
+                if recorder is not None:
+                    recorder.save("timeout")
+                needs_reset = True
+
+            # Eval mode: auto-exit when trial budget exhausted
+            if stats is not None and stats.is_done():
+                print(stats.summary())
+                break
         else:
             needs_reset = True
+            if stats is not None:
+                stats.record("redo")
+            if recorder is not None:
+                recorder.discard()
             simulation_app.update()
 
+    if stats is not None:
+        print(stats.summary())
     simulation_app.close()
 
 

@@ -25,21 +25,22 @@ class CameraManager:
             "camera_wrist": f"{base_prefix}/panda_hand/Camera_wrist/RSD455"
         }
         self.cameras = {}
+        self._initialized = False
         # Cache of last good RGB per camera so an occasional render glitch
         # never writes a black frame into the dataset.
         self._last_rgb = {}
 
 
-    def initialize_cameras(self):
-        # Rebuild Camera wrappers every setup. Fresh wrappers mean the
-        # semantic-segmentation annotator (added afterwards in
-        # enable_semantic_segmentation) gets a fresh id_to_labels for the
-        # current scene's prims — required for correct occlusion rates.
-        # The alternative (`remove_semantic_segmentation_from_frame` on a
-        # kept-alive Camera) crashes omni.syntheticdata during reset, so
-        # this is the safe path even though it occasionally lets the
-        # "empty scene + skybox" render glitch through. The _last_rgb
-        # fallback in get_all_camera_data papers over single-frame glitches.
+    def initialize_cameras(self, force=False):
+        # By default this is idempotent: cameras are built once and kept alive
+        # across resets. Re-creating the Camera render products every reset is
+        # what causes the intermittent "empty scene + skybox" flicker, so we
+        # only rebuild when explicitly asked (force=True) — which collection
+        # mode does so the semantic-segmentation annotator picks up the new
+        # scene's id_to_labels for correct occlusion rates. Eval mode keeps
+        # force=False -> stable cameras, no flicker (it doesn't need occlusion).
+        if self._initialized and not force:
+            return
         self.cameras = {}
         self._last_rgb = {}
         stage = omni.usd.get_context().get_stage()
@@ -85,6 +86,8 @@ class CameraManager:
                     self.cameras[name]["depth"] = depth_cam
                 except Exception as e:
                     print(f"[CameraManager] Failed to init Depth for {name}: {e}")
+
+        self._initialized = True
 
     def get_all_camera_data(self):
         """Read one frame from every camera. RGB has a last-good fallback so

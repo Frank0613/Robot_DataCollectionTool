@@ -1,5 +1,5 @@
 # Switch template here before a collection run
-ACTIVE_TEMPLATE = "custom"
+ACTIVE_TEMPLATE = "center"
 
 
 TEMPLATES = {
