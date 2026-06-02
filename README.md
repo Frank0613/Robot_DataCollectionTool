@@ -12,13 +12,15 @@ All commands assume Windows + Isaac Sim launcher `./run.bat` in the repo root.
 Full command with every applicable flag:
 
 ```powershell
-./run.bat --task warehouse_in_drawer --repeat 5 --debug
+./run.bat --task in_drawer --scene warehouse --container plate --mode ik --repeat 5 --debug
 ```
 
-Or legacy way (without `--task`):
+A task supplies the **instruction + special behavior**; scene and container are
+chosen separately, so the same task works across scenes:
 
 ```powershell
-./run.bat --mode ik --scene home_cabinet --template cabinet_open --container drawer --repeat 5 --debug
+./run.bat --task behind_named --scene warehouse --container plate
+./run.bat --task behind_named --scene home_cabinet --container drawer
 ```
 
 (Only `./run.bat` is required — everything else falls back to the values in
@@ -28,13 +30,13 @@ Or legacy way (without `--task`):
 
 | Flag           | Example            | What it does |
 |----------------|--------------------|--------------|
-| `--task`       | `--task warehouse_in_drawer` | **Recommended**: load a pre-configured task profile (scene + template + container + support_fixture + object filtering all bundled). Must be a key in `task_config.TASKS`. Overrides `--scene`, `--template`, `--container`. |
+| `--task`       | `--task in_drawer` | **Required for collection**: selects the instruction + special settings. Must be a key in `task_config.TASKS`. See section 3. |
+| `--scene`      | `--scene warehouse` | Which USD scene to load (file under `usdfiles/scenes/`). Defaults to the value in `configs/usd_config.py`. |
+| `--container`  | `--container plate` | Which container to spawn (key in `container_config.CONTAINERS`). Decides the success box + fills the `{container}` instruction slot. |
 | `--mode`       | `--mode ik`        | Controller type: `ik` (default) or `rmpflow`. |
-| `--scene`      | `--scene home_cabinet` | Which USD scene to load (file under `usdfiles/scenes/`). Defaults to the value in `configs/usd_config.py`. Only used if `--task` is not set. |
-| `--template`   | `--template cabinet_open` | Overrides `instruction_config.ACTIVE_TEMPLATE` for this run. Must be a key in `TEMPLATES`. Decides the language instruction and (for `stove_turn`) the success rule. Only used if `--task` is not set. |
-| `--container`  | `--container drawer` | Overrides `container_config.ACTIVE_CONTAINER`. Must be a key in `CONTAINERS`. Decides which container is spawned + its success box. Only used if `--task` is not set. |
 | `--repeat`     | `--repeat 5`       | Reuse the same object layout for N **successful** demos before re-randomizing. Manual R resets don't consume the count. Omit = randomize every reset. |
 | `--debug`      | `--debug`          | Show the red IK/RMP target ball in the scene. |
+| `--template`   | `--template basic` | **[Deprecated]** Alias for `--task` (kept for backward compatibility). |
 
 Output: appends a new `demo_<N>` group to `datasets/dataset.hdf5`. The first
 frame of each demo is also saved to `preview_recording.png` for a quick check.
@@ -46,7 +48,7 @@ frame of each demo is also saved to `preview_recording.png` for a quick check.
 Full command with every applicable flag:
 
 ```powershell
-./run.bat --eval --task warehouse_in_drawer --max-steps 600 --trials 20 --debug
+./run.bat --eval --task stove_turn --scene warehouse --container stove --max-steps 600 --trials 20 --debug
 ```
 
 (`--eval` alone = no recording, no stats. Add `--max-steps` to enable the
@@ -57,11 +59,10 @@ timeout + per-trial stats. Add `--trials` to auto-exit after N trials.)
 | Flag           | Example            | What it does |
 |----------------|--------------------|--------------|
 | `--eval`       | `--eval`           | Eval mode: **no data is recorded** (replaces the old `--inference`). |
-| `--task`       | `--task warehouse_in_drawer` | **Recommended**: load a pre-configured task profile. Overrides `--scene`, `--template`, `--container`. |
+| `--task`       | `--task stove_turn` | Selects the instruction + special settings (see section 3). |
+| `--scene`      | `--scene warehouse` | Which USD scene to load. |
+| `--container`  | `--container stove` | Which container to spawn. |
 | `--mode`       | `--mode ik`        | Controller type: `ik` (default) or `rmpflow`. |
-| `--scene`      | `--scene home_cabinet` | Which USD scene to load. Only used if `--task` is not set. |
-| `--template`   | `--template stove_turn` | Overrides the active template. Only used if `--task` is not set. |
-| `--container`  | `--container stove` | Overrides the active container. Only used if `--task` is not set. |
 | `--max-steps`  | `--max-steps 600`  | Per-trial step timeout. Exceeding it = `timeout` (a counted failure). Enables trial stats. |
 | `--trials`     | `--trials 20`      | Total counted trials before auto-exit + summary. Omit = run until window close. |
 | `--save_video` | `--save_video`     | Save each trial as an MP4 under `eval_videos/` (named `eval_trial_<N>_<outcome>.mp4`). RGB cameras side by side (no depth). Also turns on trial tracking on its own. |
@@ -104,98 +105,107 @@ Per-trial details:
 
 ## 3. Creating a new task
 
-A **task profile** bundles scene + template + container + support fixture + object filtering into a single named entry. Instead of juggling multiple `--scene`, `--template`, `--container` flags, just use `--task <name>`.
+A **task** lives in `configs/task_config.py` and only needs an `instruction`
+sentence. Scene and container are **not** part of the task — they're picked at
+run time via `--scene` / `--container`. So one task (e.g. `behind_named`) works
+across every scene/container combo without duplication:
 
-### Task profile anatomy
-
-Open `configs/task_config.py` and add an entry to the `TASKS` dict:
-
-```python
-"warehouse_in_drawer": {
-    # === Required ===
-    "scene": "Warehouse",           # USD scene filename (no .usd)
-    "container": "plate",           # Container key from container_config.CONTAINERS
-    "template": "in_drawer",        # Instruction template key from instruction_config.TEMPLATES
-    
-    # === Optional ===
-    "support_fixture": {            # A dynamic USD spawned during the task
-        "usd": "usdfiles/cabinet/white_cabinet_open.usd",
-        "anchor_point": "cabinet_pos",  # Spawn point under /World/target_points/
-        "name": "white_cabinet",    # Name for {fixture} slot in instructions
-        "scale": 1.5,               # Uniform scale (XYZ same). Omit to use USD default.
-        "hide_init": True,          # Hide during Phase 1 (baseline), show in Phase 2
-        "target_objects_dir": "usdfiles/objects/small",  # Restrict target to this dir
-    },
-    
-    "spawn_overrides": {            # Position/orientation deltas for spawn points
-        "target_point": {"z_offset": 0.15},  # 15cm above target_point
-        "point_left": {"z_offset": 0.25},    # 25cm above to avoid clipping
-    },
-    
-    "bg_skip": ["point_front"],     # Background spawn points to leave empty
-    
-    "target_offset_above_fixture": 0.30,    # (Alternative) target 30cm above fixture
-    "target_inside_fixture": {              # (Alternative) target inside fixture sub-prim
-        "subpath": "/drawer",
-        "offset": [0.0, 0.0, 0.1],  # 10cm up from drawer origin in local frame
-    },
-}
-```
-
-### Quick reference: support_fixture fields
-
-| Field | Type | Required? | Example | What it does |
-|-------|------|-----------|---------|--------------|
-| `usd` | str | yes | `"usdfiles/cabinet/white_cabinet_open.usd"` | Path to USD file to spawn |
-| `anchor_point` | str | yes | `"cabinet_pos"` | Spawn point under `/World/target_points/` to position the fixture |
-| `name` | str | yes | `"white_cabinet"` | Name for `{fixture}` slot in instructions; auto-hidden in occlusion baseline |
-| `scale` | float | no | `1.5` | Uniform scale (same for X, Y, Z). Omit = use USD default. |
-| `hide_init` | bool | no | `True` | Hide during Phase 1 baseline, show in Phase 2. Default: `False`. |
-| `target_objects_dir` | str | no | `"usdfiles/objects/small"` | Restrict target object selection to this directory. Default: all objects. |
-
-### Quick reference: spawn_overrides
-
-Apply position/orientation deltas to individual spawn points at runtime:
-
-```python
-"spawn_overrides": {
-    "target_point": {
-        "x_offset": 0.1,      # Shift +10cm in X
-        "y_offset": -0.05,    # Shift -5cm in Y
-        "z_offset": 0.2,      # Shift +20cm in Z
-    },
-    "point_left": {"z_offset": 0.15},
-}
-```
-
-### Minimal example: add a new task in 3 steps
-
-**Step 1:** Create the task entry in `configs/task_config.py`:
-```python
-"warehouse_on_stool": {
-    "scene": "Warehouse",
-    "container": "plate",
-    "template": "on_fixture",
-    "support_fixture": {
-        "usd": "usdfiles/fixtures/stool.usd",
-        "anchor_point": "target_point",
-        "name": "stool",
-    },
-    "target_offset_above_fixture": 0.30,
-}
-```
-
-**Step 2:** Ensure the template exists in `configs/instruction_config.py`:
-```python
-"on_fixture": "pick up the {obj} on the {fixture} and place it on the {container}",
-```
-
-**Step 3:** Run it:
 ```powershell
-./run.bat --task warehouse_on_stool
+./run.bat --task behind_named --scene warehouse --container plate
+./run.bat --task behind_named --scene home_cabinet --container drawer
 ```
 
-No edits to `main.py`, `object_spawner.py`, or `container_manager.py` needed!
+### Minimal task (instruction only)
+
+For ordinary pick-and-place tasks, that's the whole entry:
+
+```python
+"behind_named": {
+    "instruction": "pick up the {obj} behind the {front} and place it on the {container}",
+},
+```
+
+Run it: `./run.bat --task behind_named --scene warehouse --container plate`. Done — no edits to `main.py` or any core file.
+
+### Instruction slots
+
+The `instruction` string is filled at runtime. Available `{...}` slots:
+
+| Slot | Filled with | Notes |
+|------|-------------|-------|
+| `{obj}` | Target object class name | The object being picked up |
+| `{container}` | Active container name (from `--container`) | Where the object goes |
+| `{left}` | Background object at `point_left` | Errors if that point is empty |
+| `{right}` | Background object at `point_right` | Errors if that point is empty |
+| `{front}` | Background object at `point_front` | Errors if that point is empty |
+| `{fixture}` | `support_fixture.name` | Only valid if the task has a `support_fixture` |
+
+### Full task field reference
+
+All fields except `instruction` are optional — add them only when the task needs special behavior:
+
+| Field | Type | What it does | Example use |
+|-------|------|--------------|-------------|
+| `instruction` | str | **(Required)** The instruction sentence with `{...}` slots. | Every task |
+| `bg_skip` | list | Background spawn points to leave **empty** (no object spawned there). | `["point_front"]` to clear the area in front of a stove |
+| `spawn_overrides` | dict | Per-point position deltas (`x/y/z_offset`, meters) applied at spawn. | Raise target 15cm so it drops into a drawer |
+| `support_fixture` | dict | A dynamic USD spawned during the task (a cabinet, stool, pan...). See sub-table below. | Spawn a cabinet for the "in drawer" task |
+| `target_offset_above_fixture` | float | Spawn the target N meters **above** the fixture (world frame). | `0.30` = target sits 30cm on top of a stool |
+| `target_inside_fixture` | dict | Spawn the target inside a fixture sub-prim (`subpath` + local `offset`). | Place target inside a `/drawer` sub-prim |
+| `success_criterion` | str | Override the success rule. Default `"place_in_container"`. Use `"turn_knob"` for knob tasks. | Stove knob-turning task |
+| `skip_occlusion` | bool | Skip the two-phase occlusion-rate calc (for tasks with no target to occlude). Default `False`. | Knob tasks |
+
+#### `support_fixture` sub-fields
+
+| Field | Type | Required? | What it does |
+|-------|------|-----------|--------------|
+| `usd` | str | yes | Path to the USD file to spawn (relative to project root) |
+| `anchor_point` | str | yes | Spawn point under `/World/target_points/` that positions the fixture |
+| `name` | str | yes | Fills the `{fixture}` slot; auto-hidden in the occlusion baseline |
+| `scale` | float | no | Uniform scale (same X/Y/Z). Omit = use the USD's native scale |
+| `hide_init` | bool | no | Hide during Phase 1 baseline, reveal in Phase 2. Default `False` |
+| `target_objects_dir` | str | no | Restrict target selection to this dir (e.g. only small objects fit in a drawer). Default: all objects |
+
+### Example: special task with a fixture
+
+```python
+"in_drawer": {
+    "instruction": "pick up the {obj} in the top drawer of the {fixture} and place it on the {container}",
+    "support_fixture": {
+        "usd": "usdfiles/cabinet/white_cabinet_open.usd",
+        "anchor_point": "cabinet_pos",
+        "name": "white_cabinet",
+        "scale": 1.4,
+        "hide_init": True,
+        "target_objects_dir": "usdfiles/objects/small",
+    },
+    "spawn_overrides": {
+        "target_point": {"z_offset": 0.15},  # raise target so it drops into the drawer
+        "point_left":   {"z_offset": 0.35},  # raise BG object so it clears the cabinet body
+    },
+    "bg_skip": ["point_front"],
+},
+```
+
+Run: `./run.bat --task in_drawer --scene warehouse --container plate`
+
+### Example: knob task (no placement, no occlusion)
+
+```python
+"stove_turn": {
+    "instruction": "turn the knob on the {container}",
+    "bg_skip": ["point_front"],
+    "success_criterion": "turn_knob",  # success = knob rotated past threshold
+    "skip_occlusion": True,            # no target object to occlude
+},
+```
+
+Run: `./run.bat --task stove_turn --scene warehouse --container stove`
+(The stove container's knob spec lives in `configs/container_config.py`.)
+
+> **Object pools:** objects are scanned recursively from `usdfiles/objects/`
+> (including subdirectories). Background objects can be any of them; the target
+> defaults to any object too, unless `target_objects_dir` restricts it.
 
 ---
 

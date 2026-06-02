@@ -58,7 +58,7 @@ def main():
     parser.add_argument("--save_video", action="store_true",
                         help="Eval mode: save each trial as an MP4 under eval_videos/.")
     parser.add_argument("--template", type=str, default=None,
-                        help="Override instruction_config.ACTIVE_TEMPLATE for this run.")
+                        help="[DEPRECATED] Use --task instead. Kept as an alias for task selection.")
     parser.add_argument("--container", type=str, default=None,
                         help="Override container_config.ACTIVE_CONTAINER for this run.")
     parser.add_argument("--task", type=str, default=None,
@@ -89,7 +89,7 @@ def main():
 
     from omni.isaac.core import World
     from omni.isaac.core.utils.stage import open_stage, is_stage_loading
-    from configs import robot_config, usd_config, instruction_config, container_config, task_config
+    from configs import robot_config, usd_config, container_config, task_config
     from core.input_manager import InputManager
     from core.robot_controller import FrankaController
     from core.object_spawner import ObjectSpawner
@@ -110,14 +110,18 @@ def main():
     if args.debug:
         robot_config.DEBUG_VISUALIZE_TARGET = True
 
-    # Resolution order: --task seeds scene/template/container from a profile,
-    # then --scene/--template/--container still win as ad-hoc overrides.
+    # Task resolution order: --task wins, then --template (deprecated alias),
+    # then task_config.ACTIVE_TASK default. Scene/container come from CLI flags.
     active_task = None
-    task_name = args.task if args.task is not None else task_config.ACTIVE_TASK
+    if args.task is not None:
+        task_name = args.task
+    elif args.template is not None:
+        print(f"[Main] Note: --template is deprecated. Use --task {args.template} instead.")
+        task_name = args.template
+    else:
+        task_name = task_config.ACTIVE_TASK
     if task_name is not None:
-        active_task = task_config.apply_task(
-            task_name, usd_config, instruction_config, container_config
-        )
+        active_task = task_config.apply_task(task_name)
         print(f"[Main] Applied task profile: '{task_name}'")
 
     if args.scene:
@@ -128,16 +132,6 @@ def main():
             "scenes",
             f"{usd_config.SCENE_NAME}.usd"
         )
-
-    if args.template is not None:
-        if args.template not in instruction_config.TEMPLATES:
-            print(
-                f"\033[91m[ERROR] --template '{args.template}' not in instruction_config.TEMPLATES. "
-                f"Available: {sorted(instruction_config.TEMPLATES.keys())}\033[0m"
-            )
-            simulation_app.close()
-            sys.exit(1)
-        instruction_config.ACTIVE_TEMPLATE = args.template
 
     if args.container is not None:
         if args.container not in container_config.CONTAINERS:
@@ -170,7 +164,8 @@ def main():
         task_profile=active_task,
         fixture_mgr=fixture_mgr,
     )
-    termination_mgr = TerminationManager(world, container_mgr, spawner, controller)
+    termination_mgr = TerminationManager(world, container_mgr, spawner, controller,
+                                         task_profile=active_task)
     data_collector = DataCollector(env_name=env_name, enabled=not args.eval_mode)
     camera_mgr = CameraManager()
 
@@ -213,6 +208,20 @@ def main():
             for _ in range(15):
                 world.step(render=True)
             current_occlusion_rates = None
+            return
+
+        # Tasks that opt out of occlusion (e.g. knob tasks have no target to
+        # occlude). Spawn everything in one shot and skip the two-phase capture.
+        if active_task and active_task.get("skip_occlusion", False):
+            camera_mgr.initialize_cameras(force=True)
+            container_mgr.respawn()
+            fixture_mgr.respawn()
+            spawner.spawn_target_only()
+            spawner.spawn_remaining_objects()
+            for _ in range(13):
+                world.step(render=True)
+            current_occlusion_rates = None
+            print("[Main] Occlusion calc skipped (task opted out via skip_occlusion)")
             return
 
         # Collection mode: rebuild cameras each reset so the semantic
@@ -361,11 +370,12 @@ def main():
                     cname = cinfo.get("name", "container")
                     bg_map = getattr(spawner, "bg_class_by_point", {}) or {}
                     try:
-                        instr_text, _ = instruction_config.build_instruction(
-                            obj=tc.replace("_", " "),
-                            container=cname,
+                        instr_text = task_config.build_instruction_from_task(
+                            active_task,
+                            container_name=cname,
+                            target_obj_name=tc,
+                            fixture_name=fixture_mgr.get_fixture_name(),
                             bg_class_by_point=bg_map,
-                            fixture=fixture_mgr.get_fixture_name(),
                         )
                     except Exception as e:
                         instr_text = f"<instruction build failed: {e}>"
@@ -425,6 +435,7 @@ def main():
                     success=False,
                     occlusion_rates=current_occlusion_rates,
                     fixture_name=fixture_mgr.get_fixture_name(),
+                    task_profile=active_task,
                 )
                 needs_reset = True
 
@@ -459,6 +470,7 @@ def main():
                     success=True,
                     occlusion_rates=current_occlusion_rates,  # pass occlusion rates
                     fixture_name=fixture_mgr.get_fixture_name(),
+                    task_profile=active_task,
                 )
                 spawner.notify_task_success()
                 if stats is not None:

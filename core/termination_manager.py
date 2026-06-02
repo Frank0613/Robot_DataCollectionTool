@@ -1,16 +1,21 @@
-from configs import instruction_config
-
 # Target below this world-Z (meters) is considered fallen to the floor.
 FALL_Z_THRESHOLD = 0.7
 
 
 class TerminationManager:
-    def __init__(self, world, container_manager, object_spawner, robot_controller):
+    def __init__(self, world, container_manager, object_spawner, robot_controller,
+                 task_profile=None):
         self.world = world
         self.container_manager = container_manager
         self.object_spawner = object_spawner
         self.robot_controller = robot_controller
         self.success_counter = 0
+        # Success rule comes from the active task profile (configs/task_config.py).
+        # Defaults to place_in_container when no profile / no override.
+        self.task_profile = task_profile or {}
+        self.success_criterion = self.task_profile.get(
+            "success_criterion", "place_in_container"
+        )
 
     def reset(self):
         """reset success counter"""
@@ -18,11 +23,10 @@ class TerminationManager:
 
     def check_task_success(self):
         """
-        Dispatch to the success rule selected by the active instruction template.
-        See instruction_config.TEMPLATE_TASKS.
+        Dispatch to the success rule selected by the active task profile's
+        success_criterion (configs/task_config.py).
         """
-        task = instruction_config.get_task_type()
-        if task == "turn_knob":
+        if self.success_criterion == "turn_knob":
             return self._check_knob_task()
         return self._check_place_task()
 

@@ -4,7 +4,7 @@ import numpy as np
 import json
 from omni.isaac.core.prims import RigidPrim
 from pxr import Usd, UsdPhysics
-from configs import instruction_config
+from configs import task_config
 
 class DataCollector:
     def __init__(self, save_dir="datasets", filename="dataset.hdf5", env_name="Default_Scene", enabled=True):
@@ -211,11 +211,12 @@ class DataCollector:
 
     def save_demo(self, controller, spawner, success_obj_name,
                   container_name="container", success=True,
-                  occlusion_rates=None, fixture_name=None):
+                  occlusion_rates=None, fixture_name=None, task_profile=None):
         """
         save current demo data to hdf5 file
 
         Args:
+            task_profile: task dict from task_config.TASKS (for instruction building)
             occlusion_rates: dict from OcclusionCalculator.get_occlusion_rates()
                              format: {"cam_0": 0.15, "cam_1": 0.32, ...}
                              pass None to skip recording occlusion rates
@@ -238,14 +239,21 @@ class DataCollector:
             # === Save demo Attribute ===
             demo_group.attrs['num_samples'] = len(self.current_demo_data)
             demo_group.attrs['success'] = success
-            instr_text, tmpl_key = instruction_config.build_instruction(
-                obj=display_name,
-                container=container_name,
-                bg_class_by_point=self._get_spawner_bg_map(spawner),
-                fixture=fixture_name,
-            )
+
+            # Build instruction from task profile
+            instr_text = ""
+            if task_profile is not None:
+                try:
+                    instr_text = task_config.build_instruction_from_task(
+                        task_profile,
+                        container_name=container_name,
+                        target_obj_name=display_name,
+                        fixture_name=fixture_name,
+                        bg_class_by_point=self._get_spawner_bg_map(spawner),
+                    )
+                except Exception as e:
+                    instr_text = f"<instruction build failed: {e}>"
             demo_group.attrs['language_instruction'] = instr_text
-            demo_group.attrs['instruction_template'] = tmpl_key
 
             # --- Occlusion Rate Attribute ---
             if occlusion_rates is not None:
