@@ -211,7 +211,7 @@ class DataCollector:
 
     def save_demo(self, controller, spawner, success_obj_name,
                   container_name="container", success=True,
-                  occlusion_rates=None):
+                  occlusion_rates=None, fixture_name=None):
         """
         save current demo data to hdf5 file
 
@@ -242,6 +242,7 @@ class DataCollector:
                 obj=display_name,
                 container=container_name,
                 bg_class_by_point=self._get_spawner_bg_map(spawner),
+                fixture=fixture_name,
             )
             demo_group.attrs['language_instruction'] = instr_text
             demo_group.attrs['instruction_template'] = tmpl_key

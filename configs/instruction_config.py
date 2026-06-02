@@ -10,7 +10,6 @@ TEMPLATES = {
     "next_to_left":  "pick up the {obj} next to the {left} and place it on the {container}",
     "behind_named":  "pick up the {obj} behind the {front} and place it on the {container}",
     "between_named": "pick up the {obj} between the {left} and the {right} and place it on the {container}",
-    "custom":      "pick up the {obj} in the top drawer of the white cabinet and place it on the {container}",
 
     "cabinet_place":       "pick up the {obj} from the cabinet and place it on the {container}",
     "cabinet_open":       "open the cabinet and pick up the {obj} and place it on the {container}",
@@ -19,6 +18,11 @@ TEMPLATES = {
     # not placing an object. {obj} is unused so it can be omitted from the text.
     "stove_turn":          "turn the knob on the {container}",
     "stove_place":          "pick up the {obj} and place it on the {container}",
+
+    # Templates with the {fixture} slot. The fixture name comes from the active
+    # task profile's support_fixture.name (see configs/task_config.py).
+    "on_fixture":   "pick up the {obj} on the {fixture} and place it on the {container}",
+    "in_drawer":    "pick up the {obj} in the top drawer of the {fixture} and place it on the {container}",
 }
 
 # Which point name (from usd_config.BG_SPAWN_POINTS) each slot maps to
@@ -40,9 +44,22 @@ def get_task_type(template_name: str | None = None) -> str:
     return TEMPLATE_TASKS.get(name, "place_in_container")
 
 
-def build_instruction(obj: str, container: str, bg_class_by_point: dict | None = None) -> tuple[str, str]:
+def build_instruction(
+    obj: str,
+    container: str,
+    bg_class_by_point: dict | None = None,
+    fixture: str | None = None,
+) -> tuple[str, str]:
     tmpl = TEMPLATES[ACTIVE_TEMPLATE]
     slots = {"obj": obj, "container": container}
+
+    if "{fixture}" in tmpl:
+        if fixture is None:
+            raise ValueError(
+                f"Template '{ACTIVE_TEMPLATE}' needs slot 'fixture' but active "
+                f"task profile has no support_fixture.name"
+            )
+        slots["fixture"] = fixture.replace("_", " ")
 
     bg_class_by_point = bg_class_by_point or {}
     for slot_key, point_name in POINT_SLOT_MAP.items():

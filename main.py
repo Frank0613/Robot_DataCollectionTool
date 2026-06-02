@@ -61,6 +61,10 @@ def main():
                         help="Override instruction_config.ACTIVE_TEMPLATE for this run.")
     parser.add_argument("--container", type=str, default=None,
                         help="Override container_config.ACTIVE_CONTAINER for this run.")
+    parser.add_argument("--task", type=str, default=None,
+                        help="Select a task profile (see configs/task_config.py TASKS). "
+                             "Sets scene/template/container in one shot; "
+                             "individual --scene/--template/--container still override.")
     args, unknown = parser.parse_known_args()
 
     # file checking tools
@@ -85,11 +89,12 @@ def main():
 
     from omni.isaac.core import World
     from omni.isaac.core.utils.stage import open_stage, is_stage_loading
-    from configs import robot_config, usd_config, instruction_config, container_config
+    from configs import robot_config, usd_config, instruction_config, container_config, task_config
     from core.input_manager import InputManager
     from core.robot_controller import FrankaController
     from core.object_spawner import ObjectSpawner
     from core.container_manager import ContainerManager
+    from core.fixture_manager import FixtureManager
     from core.termination_manager import TerminationManager
     from core.data_collector import DataCollector
     from core.camera_manager import CameraManager
@@ -104,6 +109,17 @@ def main():
             setattr(robot_config, config_var, val)
     if args.debug:
         robot_config.DEBUG_VISUALIZE_TARGET = True
+
+    # Resolution order: --task seeds scene/template/container from a profile,
+    # then --scene/--template/--container still win as ad-hoc overrides.
+    active_task = None
+    task_name = args.task if args.task is not None else task_config.ACTIVE_TASK
+    if task_name is not None:
+        active_task = task_config.apply_task(
+            task_name, usd_config, instruction_config, container_config
+        )
+        print(f"[Main] Applied task profile: '{task_name}'")
+
     if args.scene:
         usd_config.SCENE_NAME = args.scene
         usd_config.USD_PATH = os.path.join(
@@ -113,7 +129,6 @@ def main():
             f"{usd_config.SCENE_NAME}.usd"
         )
 
-    # CLI overrides for the active template / container (avoids editing configs each run)
     if args.template is not None:
         if args.template not in instruction_config.TEMPLATES:
             print(
@@ -134,26 +149,6 @@ def main():
             sys.exit(1)
         container_config.ACTIVE_CONTAINER = args.container
 
-    active_template = instruction_config.ACTIVE_TEMPLATE
-    active_container = container_config.ACTIVE_CONTAINER
-
-    if active_template.startswith("cabinet") and not usd_config.SCENE_NAME.endswith("cabinet"):
-        print(
-            f"\033[91m[ERROR] ACTIVE_TEMPLATE='{active_template}' expects a cabinet scene, "
-            f"but --scene='{usd_config.SCENE_NAME}' does not end with 'cabinet' "
-            f"(e.g. 'home_cabinet'). Aborting.\033[0m"
-        )
-        simulation_app.close()
-        sys.exit(1)
-
-    if active_template.startswith("stove") and active_container != "stove":
-        print(
-            f"\033[91m[ERROR] ACTIVE_TEMPLATE='{active_template}' requires "
-            f"ACTIVE_CONTAINER='stove', but got '{active_container}'. Aborting.\033[0m"
-        )
-        simulation_app.close()
-        sys.exit(1)
-
     # Load scene
     print(f"Loading Scene: {usd_config.USD_PATH}")
     open_stage(usd_config.USD_PATH)
@@ -167,8 +162,14 @@ def main():
     # Init controller & Input
     controller = FrankaController(world)
     input_mgr = InputManager()
-    spawner = ObjectSpawner(world, repeat_count=args.repeat)
     container_mgr = ContainerManager(world)
+    fixture_mgr = FixtureManager(world, task_profile=active_task)
+    spawner = ObjectSpawner(
+        world,
+        repeat_count=args.repeat,
+        task_profile=active_task,
+        fixture_mgr=fixture_mgr,
+    )
     termination_mgr = TerminationManager(world, container_mgr, spawner, controller)
     data_collector = DataCollector(env_name=env_name, enabled=not args.eval_mode)
     camera_mgr = CameraManager()
@@ -205,8 +206,9 @@ def main():
         # caused by re-creating render products every reset.
         if args.eval_mode:
             camera_mgr.initialize_cameras()          # idempotent: build once, stay stable
-            spawner.spawn_target_only()
             container_mgr.respawn()
+            fixture_mgr.respawn()
+            spawner.spawn_target_only()
             spawner.spawn_remaining_objects()
             for _ in range(15):
                 world.step(render=True)
@@ -218,15 +220,32 @@ def main():
         camera_mgr.initialize_cameras(force=True)
 
         # === Phase 1: spawn target only ===
-        spawner.spawn_target_only()
         container_mgr.respawn()
+        fixture_mgr.respawn()
+        spawner.spawn_target_only()
 
-        # Hide static occluders (e.g. white_cabinet) IMMEDIATELY — before any
-        # settle/render — so they are never shown during setup (the target just
-        # looks like it floats). Visibility only -> colliders stay active, so the
-        # target still settles onto the now-invisible surface.
+        # Hide static occluders (scene-baked names from usd_config + per-task
+        # fixture names) IMMEDIATELY — before any settle/render — so they are
+        # never shown during setup (the target just looks like it floats).
+        # Visibility only -> colliders stay active, so the target still settles
+        # onto the now-invisible surface.
+        hide_names = list(getattr(usd_config, "OCCLUSION_HIDE_PRIMS", []))
+
+        # Check if fixture should be hidden during Phase 1
+        fixture_hide_init = (
+            active_task and
+            active_task.get("support_fixture", {}).get("hide_init", False)
+        )
+        fixture_names = fixture_mgr.get_occlusion_hide_names()
+        if fixture_hide_init:
+            # Don't use occlusion hide for fixture; we'll control it manually
+            # via fixture_mgr.make_invisible/visible
+            fixture_mgr.make_invisible()
+        else:
+            hide_names.extend(fixture_names)
+
         hidden = []
-        for name in getattr(usd_config, "OCCLUSION_HIDE_PRIMS", []):
+        for name in hide_names:
             if _set_render_visibility(world.stage, name, visible=False):
                 hidden.append(name)
         if hidden:
@@ -240,6 +259,8 @@ def main():
             print("[Main] Warning: target_class_name is None, skipping occlusion calc")
             for name in hidden:
                 _set_render_visibility(world.stage, name, visible=True)
+            if fixture_hide_init:
+                fixture_mgr.make_visible()
             spawner.spawn_remaining_objects()
             for _ in range(8):
                 world.step(render=True)
@@ -263,6 +284,10 @@ def main():
         # Restore the hidden occluders so they DO count toward occlusion in Phase 2
         for name in hidden:
             _set_render_visibility(world.stage, name, visible=True)
+
+        # Show fixture if it was hidden during Phase 1
+        if fixture_hide_init:
+            fixture_mgr.make_visible()
 
         # === Phase 2: spawn remaining objects ===
         spawner.spawn_remaining_objects()
@@ -340,6 +365,7 @@ def main():
                             obj=tc.replace("_", " "),
                             container=cname,
                             bg_class_by_point=bg_map,
+                            fixture=fixture_mgr.get_fixture_name(),
                         )
                     except Exception as e:
                         instr_text = f"<instruction build failed: {e}>"
@@ -398,6 +424,7 @@ def main():
                     container_name=c_name,
                     success=False,
                     occlusion_rates=current_occlusion_rates,
+                    fixture_name=fixture_mgr.get_fixture_name(),
                 )
                 needs_reset = True
 
@@ -430,7 +457,8 @@ def main():
                     success_obj_name,
                     container_name=c_name,
                     success=True,
-                    occlusion_rates=current_occlusion_rates  # pass occlusion rates
+                    occlusion_rates=current_occlusion_rates,  # pass occlusion rates
+                    fixture_name=fixture_mgr.get_fixture_name(),
                 )
                 spawner.notify_task_success()
                 if stats is not None:

@@ -28,4 +28,8 @@ CONTAINER_PRIM_PATH = "/World/Container"
 # active, so the target keeps resting on the now-invisible surface.
 # Accepts exact prim paths or bare prim names (searched across the stage).
 # Names not present in the current scene are silently skipped.
-OCCLUSION_HIDE_PRIMS = ["white_cabinet"]
+#
+# Per-task fixtures (e.g. a stool the target sits on) are auto-appended at
+# runtime by FixtureManager.get_occlusion_hide_names() — list ONLY scene-baked
+# prims here (e.g. a cabinet already inside home_cabinet.usd).
+OCCLUSION_HIDE_PRIMS = []

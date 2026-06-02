@@ -45,16 +45,21 @@ class ContainerManager:
         usd_path = os.path.join(usd_config.BASE_DIR, rel_path)
         add_reference_to_stage(usd_path=usd_path, prim_path=usd_config.CONTAINER_PRIM_PATH)
 
-        self.container_prim = XFormPrim(
+        xform_kwargs = dict(
             prim_path=usd_config.CONTAINER_PRIM_PATH,
             name=name,
             position=spawn_pos,
             orientation=spawn_rot,
-            scale=np.array([1.0, 1.0, 1.0])
         )
+        info_scale = info.get("scale")
+        if info_scale is not None:
+            s = float(info_scale)
+            xform_kwargs["scale"] = np.array([s, s, s])
+        self.container_prim = XFormPrim(**xform_kwargs)
         self.world.scene.add(self.container_prim)
         mode = self._interior_spec if isinstance(self._interior_spec, str) else "local_box"
-        print(f"[ContainerManager] Spawned '{name}' (interior={mode})")
+        scale_str = f", scale={info_scale}" if info_scale is not None else ""
+        print(f"[ContainerManager] Spawned '{name}' (interior={mode}){scale_str}")
 
         # Reset and (re)capture knob baseline if this container has a knob spec
         self._knob_subpath = None
