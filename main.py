@@ -51,6 +51,9 @@ def main():
                         help="Visualize the IK/RMP target ball in the scene.")
     parser.add_argument("--eval", dest="eval_mode", action="store_true",
                         help="Run without recording any data (for model inference or manual eval).")
+    parser.add_argument("--headless", action="store_true",
+                        help="Run Isaac Sim without the GUI viewport (recommended for eval; "
+                             "avoids RTX viewport init crashes).")
     parser.add_argument("--max-steps", dest="max_steps", type=int, default=None,
                         help="Per-trial step timeout (eval mode only). Required to enable stats.")
     parser.add_argument("--trials", type=int, default=None,
@@ -85,7 +88,17 @@ def main():
     
     print("Starting Isaac Sim Environment...")
     from isaacsim import SimulationApp
-    simulation_app = SimulationApp({"headless": False})
+    simulation_app = SimulationApp({"headless": args.headless})
+
+    # ROS2 bridge is only needed for eval (publishes joint states / RGBD via the
+    # Action Graph baked into the robot USD). Must be enabled BEFORE open_stage()
+    # so the graph's ROS2 node types resolve. Data collection runs skip this —
+    # the graph's nodes simply fail to load, which is harmless.
+    if args.eval_mode:
+        from isaacsim.core.utils.extensions import enable_extension
+        enable_extension("isaacsim.ros2.bridge")
+        simulation_app.update()
+        print("[Main] ROS2 bridge enabled (eval mode)")
 
     from omni.isaac.core import World
     from omni.isaac.core.utils.stage import open_stage, is_stage_loading
