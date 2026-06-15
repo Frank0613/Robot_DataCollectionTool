@@ -4,7 +4,7 @@ import sys
 
 from tools.hdf5_reader import print_structure_by_path
 from tools.hdf5_checker import visualize_hdf5_cameras_by_path
-from tools.hdf5_video import visualize_hdf5_demo_as_video
+from tools.hdf5_video import visualize_hdf5_demo_as_video, export_hdf5_demo_frames
 from core.occlusion_calculator import OcclusionCalculator
 from core.inference_stats import InferenceStats
 
@@ -41,6 +41,8 @@ def main():
     parser.add_argument("--checkfile", type=str)
     parser.add_argument("--checkvideo", type=str,
                         help="Render a whole demo as an MP4 (use with --demo).")
+    parser.add_argument("--everyframe", type=str,
+                        help="Export every RGB frame of a demo as PNGs, one folder per camera (use with --demo).")
     parser.add_argument("--demo", type=int, default=0,
                         help="Demo index for --checkfile and --checkvideo.")
     parser.add_argument("--index", type=int, default=0)
@@ -84,6 +86,11 @@ def main():
     if args.checkvideo:
         target = os.path.join("datasets", f"{args.checkvideo}.hdf5")
         visualize_hdf5_demo_as_video(target, demo_idx=args.demo)
+        return
+
+    if args.everyframe:
+        target = os.path.join("datasets", f"{args.everyframe}.hdf5")
+        export_hdf5_demo_frames(target, demo_idx=args.demo)
         return
     
     print("Starting Isaac Sim Environment...")

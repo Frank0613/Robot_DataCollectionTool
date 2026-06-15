@@ -146,5 +146,8 @@ class FixtureManager:
                 dy = float(override.get("y_offset", 0.0))
                 dz = float(override.get("z_offset", 0.0))
                 pos = np.array([pos[0] + dx, pos[1] + dy, pos[2] + dz])
+            # Randomize the target within a circle around its preset point.
+            pos = usd_config.randomize_xy(np.asarray(pos, dtype=np.float64),
+                                          point_name="target_point")
             return np.asarray(pos, dtype=np.float64), np.asarray(quat, dtype=np.float64)
         return None, None

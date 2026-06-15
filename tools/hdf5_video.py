@@ -131,6 +131,70 @@ def visualize_hdf5_demo_as_video(file_path, demo_idx=0, output_path=None, fps=30
         print(f"[Fallback] Wrote {len(frames)} PNGs to {png_dir}/")
 
 
+def export_hdf5_demo_frames(file_path, demo_idx=0, output_dir=None):
+    """Export every RGB frame of a demo to PNG, one folder per camera view
+    (depth is ignored). Layout:
+        <output_dir>/<cam>/frame_0000.png, frame_0001.png, ...
+    """
+    if not os.path.exists(file_path):
+        print(f"[Error] File not found: {file_path}")
+        return
+
+    with h5py.File(file_path, 'r') as f:
+        total_demos = int(f['data'].attrs.get('total', 0))
+        if demo_idx >= total_demos:
+            print(f"[Error] Demo index {demo_idx} out of range. File has {total_demos} demos.")
+            return
+
+        demo_path = f"data/demo_{demo_idx}/obs"
+        if demo_path not in f:
+            print(f"[Error] In demo_{demo_idx}, obs group not found.")
+            return
+
+        obs = f[demo_path]
+        num_frames = int(obs['actions'].shape[0])
+
+        # Collect RGB camera datasets only (depth is ignored)
+        rgb_datasets = {}
+
+        def find_datasets(name, obj):
+            if isinstance(obj, h5py.Dataset) and "/rgb" in f"/{name}":
+                rgb_datasets[name] = obj
+
+        obs.visititems(find_datasets)
+        if not rgb_datasets:
+            print("[Error] No RGB cameras in this demo.")
+            return
+
+        rgb_keys = sorted(rgb_datasets.keys())
+        cam_label_names = [k.split('/')[0] for k in rgb_keys]
+        print(f"[Frames] Demo {demo_idx} | {num_frames} frames | {len(rgb_keys)} RGB cams")
+        print(f"[Frames] Cameras: {cam_label_names}")
+
+        stem = os.path.splitext(os.path.basename(file_path))[0]
+        if output_dir is None:
+            output_dir = f"frames_{stem}_demo_{demo_idx}"
+
+        try:
+            import imageio.v2 as imageio
+            _imwrite = imageio.imwrite
+        except Exception:
+            from matplotlib import image as mpimg
+            _imwrite = mpimg.imsave
+
+        total_written = 0
+        for key, cam in zip(rgb_keys, cam_label_names):
+            cam_dir = os.path.join(output_dir, cam)
+            os.makedirs(cam_dir, exist_ok=True)
+            arr = rgb_datasets[key][:num_frames]
+            for i, img in enumerate(arr):
+                _imwrite(os.path.join(cam_dir, f"frame_{i:04d}.png"), img.astype(np.uint8))
+            total_written += len(arr)
+            print(f"[Frames] {cam}: wrote {len(arr)} PNGs -> {cam_dir}/")
+
+        print(f"[Frames] Done. {total_written} images under {output_dir}/")
+
+
 def _write_mp4(frames, output_path, fps):
     """Try multiple MP4 backends in order of preference. Returns True on success."""
     # 1) imageio + ffmpeg (highest quality, needs `imageio[ffmpeg]`)

@@ -141,16 +141,25 @@ class ObjectSpawner:
 
         bg_count = len(usd_config.BG_SPAWN_POINTS)
 
-        # Select background objects from all available USDs
-        if len(self.available_usds) >= bg_count:
-            bg_selected = random.sample(self.available_usds, k=bg_count)
+        # Select target object first (from task-filtered list)
+        target_usd = random.choice(self.available_target_usds)
+
+        # Background objects come from all available USDs, excluding the target
+        # so no object is spawned twice. random.sample guarantees the
+        # backgrounds are also distinct from each other.
+        bg_pool = [u for u in self.available_usds if u != target_usd]
+        if len(bg_pool) >= bg_count:
+            bg_selected = random.sample(bg_pool, k=bg_count)
         else:
-            bg_selected = random.choices(self.available_usds, k=bg_count)
+            # Not enough unique objects to fill every point without repeats;
+            # take all uniques and pad with random extras (duplicates possible).
+            print(f"[ObjectSpawner] Warning: only {len(bg_pool)} unique background "
+                  f"objects for {bg_count} points; some may repeat.")
+            bg_selected = bg_pool[:]
+            if bg_pool:
+                bg_selected += random.choices(bg_pool, k=bg_count - len(bg_pool))
 
-        # Select target object from task-filtered list
-        target_selected = [random.choice(self.available_target_usds)]
-
-        self._selected_files = bg_selected + target_selected
+        self._selected_files = bg_selected + [target_usd]
 
         self._success_count = 0
         if self.repeat_count:
@@ -181,6 +190,7 @@ class ObjectSpawner:
         elif is_prim_path_valid(target_point_path):
             position, orientation = XFormPrim(target_point_path).get_world_pose()
             position = self._apply_spawn_override("target_point", position)
+            position = usd_config.randomize_xy(position, point_name="target_point")
         else:
             position, orientation = None, None
 
@@ -232,6 +242,7 @@ class ObjectSpawner:
                 continue
             position, orientation = XFormPrim(point_path).get_world_pose()
             position = self._apply_spawn_override(point_name, position)
+            position = usd_config.randomize_xy(position, point_name=point_name)
 
             obj_name = f"spawned_obj_{point_name}"
             usd_file = self._selected_files[i]

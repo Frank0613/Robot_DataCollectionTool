@@ -41,6 +41,9 @@ class ContainerManager:
             point_prim = XFormPrim(usd_config.CONTAINER_POINT_PATH)
             spawn_pos, spawn_rot = point_prim.get_world_pose()
 
+        # Randomize the container within a circle around its preset point.
+        spawn_pos = usd_config.randomize_xy(spawn_pos, point_name="container_pos")
+
         # Spawn Container
         usd_path = os.path.join(usd_config.BASE_DIR, rel_path)
         add_reference_to_stage(usd_path=usd_path, prim_path=usd_config.CONTAINER_PRIM_PATH)
