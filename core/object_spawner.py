@@ -191,6 +191,7 @@ class ObjectSpawner:
             position, orientation = XFormPrim(target_point_path).get_world_pose()
             position = self._apply_spawn_override("target_point", position)
             position = usd_config.randomize_xy(position, point_name="target_point")
+            orientation = usd_config.randomize_yaw(orientation, point_name="target_point")
         else:
             position, orientation = None, None
 
@@ -243,6 +244,7 @@ class ObjectSpawner:
             position, orientation = XFormPrim(point_path).get_world_pose()
             position = self._apply_spawn_override(point_name, position)
             position = usd_config.randomize_xy(position, point_name=point_name)
+            orientation = usd_config.randomize_yaw(orientation, point_name=point_name)
 
             obj_name = f"spawned_obj_{point_name}"
             usd_file = self._selected_files[i]

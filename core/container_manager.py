@@ -41,8 +41,10 @@ class ContainerManager:
             point_prim = XFormPrim(usd_config.CONTAINER_POINT_PATH)
             spawn_pos, spawn_rot = point_prim.get_world_pose()
 
-        # Randomize the container within a circle around its preset point.
+        # Randomize the container within a circle around its preset point,
+        # plus a random yaw about the world Z axis.
         spawn_pos = usd_config.randomize_xy(spawn_pos, point_name="container_pos")
+        spawn_rot = usd_config.randomize_yaw(spawn_rot, point_name="container_pos")
 
         # Spawn Container
         usd_path = os.path.join(usd_config.BASE_DIR, rel_path)
