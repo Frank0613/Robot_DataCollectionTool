@@ -46,13 +46,20 @@ def main():
     parser.add_argument("--demo", type=int, default=0,
                         help="Demo index for --checkfile and --checkvideo.")
     parser.add_argument("--index", type=int, default=0)
-    parser.add_argument("--repeat", type=int, default=None,
-                        help="Repeat the task N times with the same object layout before re-randomizing. "
-                             "Omit to randomize every reset.")
     parser.add_argument("--debug", action="store_true",
                         help="Visualize the IK/RMP target ball in the scene.")
+    parser.add_argument("--show-zone", dest="show_zone", action="store_true",
+                        help="Draw the container's interior success/drop zone as a translucent box "
+                             "for tuning container_config 'interior'. The box appears in camera RGB, "
+                             "so use it only for manual tuning, not while recording.")
     parser.add_argument("--eval", dest="eval_mode", action="store_true",
                         help="Run without recording any data (for model inference or manual eval).")
+    parser.add_argument("--dataset", type=str, default=None,
+                        help="Eval mode: reproduce the initial_scene recorded in datasets/<name>.hdf5 "
+                             "(same objects + container at the exact same positions/angles).")
+    parser.add_argument("--out", type=str, default="dataset",
+                        help="Collection output name -> datasets/<name>.hdf5. If the file already "
+                             "holds demos from a different config, an auto-suffixed file is used.")
     parser.add_argument("--headless", action="store_true",
                         help="Run Isaac Sim without the GUI viewport (recommended for eval; "
                              "avoids RTX viewport init crashes).")
@@ -64,12 +71,10 @@ def main():
                         help="Eval mode: save each trial as an MP4 under eval_videos/.")
     parser.add_argument("--template", type=str, default=None,
                         help="[DEPRECATED] Use --task instead. Kept as an alias for task selection.")
-    parser.add_argument("--container", type=str, default=None,
-                        help="Override container_config.ACTIVE_CONTAINER for this run.")
     parser.add_argument("--task", type=str, default=None,
                         help="Select a task profile (see configs/task_config.py TASKS). "
-                             "Sets scene/template/container in one shot; "
-                             "individual --scene/--template/--container still override.")
+                             "Sets scene/template; --scene/--template still override. "
+                             "Container and object layout come from configs/scene_config.py.")
     args, unknown = parser.parse_known_args()
 
     # file checking tools
@@ -97,19 +102,13 @@ def main():
     from isaacsim import SimulationApp
     simulation_app = SimulationApp({"headless": args.headless})
 
-    # ROS2 bridge is only needed for eval (publishes joint states / RGBD via the
-    # Action Graph baked into the robot USD). Must be enabled BEFORE open_stage()
-    # so the graph's ROS2 node types resolve. Data collection runs skip this —
-    # the graph's nodes simply fail to load, which is harmless.
-    if args.eval_mode:
-        from isaacsim.core.utils.extensions import enable_extension
-        enable_extension("isaacsim.ros2.bridge")
-        simulation_app.update()
-        print("[Main] ROS2 bridge enabled (eval mode)")
+    # Eval uses keyboard control (same input path as data collection); no ROS
+    # bridge is enabled. The Action Graph baked into the robot USD simply fails
+    # to load its ROS2 nodes, which is harmless.
 
     from omni.isaac.core import World
     from omni.isaac.core.utils.stage import open_stage, is_stage_loading
-    from configs import robot_config, usd_config, container_config, task_config
+    from configs import robot_config, usd_config, container_config, task_config, scene_config
     from core.input_manager import InputManager
     from core.robot_controller import FrankaController
     from core.object_spawner import ObjectSpawner
@@ -118,6 +117,7 @@ def main():
     from core.termination_manager import TerminationManager
     from core.data_collector import DataCollector
     from core.camera_manager import CameraManager
+    from core.eval_scene import load_initial_scene
     import omni.kit.app
     
     param_mapping = {
@@ -153,15 +153,44 @@ def main():
             f"{usd_config.SCENE_NAME}.usd"
         )
 
-    if args.container is not None:
-        if args.container not in container_config.CONTAINERS:
+    # Container is chosen in configs/scene_config.py LAYOUT["container_pos"]
+    # ("container"), referencing a key in container_config.CONTAINERS.
+    # None -> keep container_config's default.
+    container_key = scene_config.get_container_key()
+    if container_key is not None:
+        if container_key not in container_config.CONTAINERS:
             print(
-                f"\033[91m[ERROR] --container '{args.container}' not in container_config.CONTAINERS. "
-                f"Available: {sorted(container_config.CONTAINERS.keys())}\033[0m"
+                f"\033[91m[ERROR] scene_config container '{container_key}' not in "
+                f"container_config.CONTAINERS. Available: {sorted(container_config.CONTAINERS.keys())}\033[0m"
             )
             simulation_app.close()
             sys.exit(1)
-        container_config.ACTIVE_CONTAINER = args.container
+        container_config.ACTIVE_CONTAINER = container_key
+
+    # Eval replay: load a recorded dataset's initial_scene so we can reproduce
+    # the exact starting layout (same objects + container at the same poses).
+    # The dataset's container overrides scene_config's choice.
+    eval_scene = None
+    eval_container_pose = None
+    if args.eval_mode and args.dataset is not None:
+        dataset_path = os.path.join("datasets", f"{args.dataset}.hdf5")
+        eval_scene = load_initial_scene(dataset_path)
+        if eval_scene is None:
+            print(f"\033[91m[ERROR] Could not load initial_scene from {dataset_path}\033[0m")
+            simulation_app.close()
+            sys.exit(1)
+        container_entry = eval_scene.get("container")
+        if container_entry is not None:
+            ckey = container_entry["class"]
+            if ckey in container_config.CONTAINERS:
+                container_config.ACTIVE_CONTAINER = ckey
+            else:
+                print(f"[Main] Warning: recorded container '{ckey}' not in "
+                      f"container_config.CONTAINERS; keeping '{container_config.ACTIVE_CONTAINER}'")
+            if container_entry.get("pose") is not None:
+                cp = container_entry["pose"]
+                eval_container_pose = (cp[:3], cp[3:7])
+        print(f"[Main] Eval replay enabled from dataset '{args.dataset}'")
 
     # Load scene
     print(f"Loading Scene: {usd_config.USD_PATH}")
@@ -177,16 +206,34 @@ def main():
     controller = FrankaController(world)
     input_mgr = InputManager()
     container_mgr = ContainerManager(world)
+    container_mgr.debug_zone = args.show_zone
     fixture_mgr = FixtureManager(world, task_profile=active_task)
     spawner = ObjectSpawner(
         world,
-        repeat_count=args.repeat,
         task_profile=active_task,
         fixture_mgr=fixture_mgr,
     )
+    # Eval replay: lock object identities to the recorded scene so resets after
+    # the first exact reproduction keep the same objects (randomized poses).
+    if eval_scene is not None:
+        spawner.apply_scene_objects(eval_scene)
     termination_mgr = TerminationManager(world, container_mgr, spawner, controller,
                                          task_profile=active_task)
-    data_collector = DataCollector(env_name=env_name, enabled=not args.eval_mode)
+    # Config signature: ties an output dataset file to one object/container/
+    # scene/task combo so a single file never mixes layouts (see DataCollector).
+    config_signature = {
+        "env": env_name,
+        "container": container_config.ACTIVE_CONTAINER,
+        "task": task_name,
+        "objects": {p: scene_config.get_file(p)
+                    for p in (["target_point"] + list(usd_config.BG_SPAWN_POINTS))},
+    }
+    data_collector = DataCollector(
+        env_name=env_name,
+        enabled=not args.eval_mode,
+        filename=f"{args.out}.hdf5",
+        config_signature=config_signature,
+    )
     camera_mgr = CameraManager()
 
     # Eval/inference trial tracking — enabled when --eval AND any of
@@ -208,9 +255,10 @@ def main():
     # Occlusion rate calculation (run on scene init & every reset)
     # ============================================
     current_occlusion_rates = None  # stores occlusion rate results for the current scene
+    eval_replay_done = False         # eval replay: first reset is exact, rest randomize
 
     def setup_scene_with_occlusion():
-        nonlocal current_occlusion_rates
+        nonlocal current_occlusion_rates, eval_replay_done
 
         world.reset()
         controller.initialize_handles()
@@ -221,10 +269,21 @@ def main():
         # caused by re-creating render products every reset.
         if args.eval_mode:
             camera_mgr.initialize_cameras()          # idempotent: build once, stay stable
-            container_mgr.respawn()
-            fixture_mgr.respawn()
-            spawner.spawn_target_only()
-            spawner.spawn_remaining_objects()
+            if eval_scene is not None and not eval_replay_done:
+                # First reset: reproduce the recorded layout EXACTLY (same
+                # objects + container at the same positions/angles), no randomization.
+                container_mgr.respawn(override_pose=eval_container_pose)
+                fixture_mgr.respawn()
+                spawner.respawn_from_scene(eval_scene)
+                eval_replay_done = True
+            else:
+                # Subsequent eval resets (and non-replay eval): same objects
+                # (locked via apply_scene_objects when replaying) at randomized
+                # positions/angles.
+                container_mgr.respawn()
+                fixture_mgr.respawn()
+                spawner.spawn_target_only()
+                spawner.spawn_remaining_objects()
             for _ in range(15):
                 world.step(render=True)
             current_occlusion_rates = None
@@ -441,8 +500,6 @@ def main():
                         print(f"[Main] First-frame preview saved -> {saved}")
 
             # Manual fail save (N key): save current demo as failure and reset.
-            # Layout selection is NOT advanced (notify_task_success is skipped) so
-            # the same scene re-rolls until the user gets a successful demo.
             if fail_cmd and data_collector.recording:
                 container_info = container_mgr.get_container_info()
                 c_name = container_info.get("name", "container")
@@ -492,7 +549,6 @@ def main():
                     fixture_name=fixture_mgr.get_fixture_name(),
                     task_profile=active_task,
                 )
-                spawner.notify_task_success()
                 if stats is not None:
                     stats.record("success")
                 if recorder is not None:

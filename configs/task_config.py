@@ -15,7 +15,8 @@ ACTIVE_TASK = None
 # Task Schema (all fields optional except for special tasks):
 #   instruction      : str  - the full instruction sentence with {obj}, {container}, etc.
 #   support_fixture  : dict - (optional) dynamic fixture to spawn. Contains:
-#     usd, anchor_point, name, scale, hide_init, target_objects_dir
+#     usd, anchor_point, name, scale, hide_init
+#     (object selection is deterministic via configs/scene_config.py)
 #   spawn_overrides  : dict - (optional) per-point position/orientation deltas
 #   bg_skip          : list - (optional) background spawn points to leave empty
 #   target_offset_above_fixture : float - (optional) target height above fixture
@@ -73,7 +74,6 @@ TASKS = {
             "name": "white_cabinet",
             "scale": 1.4,
             "hide_init": True,
-            "target_objects_dir": "usdfiles/objects/small",
         },
         "spawn_overrides": {
             "target_point": {"z_offset": 0.15},

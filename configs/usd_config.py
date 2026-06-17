@@ -4,30 +4,43 @@ import random
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# --- Spawn position randomization ---------------------------------------
-# Each spawnable object (target, background, container) is placed at a random
-# point inside a circle centered on its preset spawn point, so every reset
-# produces a slightly different layout. The radius is in meters and is applied
-# in the XY plane only (Z, the resting height, is preserved).
-#
-# Set SPAWN_RANDOM_RADIUS = 0.0 to disable and spawn exactly at the preset
-# point (the previous fixed behavior). Use SPAWN_RANDOM_RADII to override the
-# radius for specific points, keyed by point name (e.g. "container_pos",
-# "target_point", "point_right").
-SPAWN_RANDOM_RADIUS = 0.05
+# --- Spawn randomization fallbacks --------------------------------------
+# randomize_xy() / randomize_yaw() below are pure helpers: each spawnable
+# object is shifted within a circle (XY only, Z preserved) and rotated about
+# the world Z axis. The ACTUAL per-point radius/yaw values now live in
+# configs/scene_config.py and are passed in explicitly by the spawn managers.
+# The module-level constants here are only used as a last-resort default if a
+# caller invokes the helpers without a radius / yaw_range argument.
+SPAWN_RANDOM_RADIUS = 0.05      # meters
 SPAWN_RANDOM_RADII = {}
-
-# --- Spawn yaw (Z-axis) randomization -----------------------------------
-# In addition to the XY position, each spawnable object is rotated by a random
-# angle about the world Z (vertical) axis, so the same object faces a different
-# direction every reset. The range is in DEGREES: the yaw is sampled uniformly
-# from [-SPAWN_RANDOM_YAW_RANGE, +SPAWN_RANDOM_YAW_RANGE]. 180 -> full circle.
-#
-# Set SPAWN_RANDOM_YAW_RANGE = 0.0 to disable and keep the preset orientation.
-# Use SPAWN_RANDOM_YAW_RANGES to override the range for specific points, keyed
-# by point name (e.g. "container_pos", "target_point", "point_right").
-SPAWN_RANDOM_YAW_RANGE = 45.0
+SPAWN_RANDOM_YAW_RANGE = 45.0   # degrees (half-range)
 SPAWN_RANDOM_YAW_RANGES = {}
+
+
+def quat_mul(q1, q2):
+    """Hamilton product of two (w, x, y, z) quaternions; returns a (w,x,y,z) tuple."""
+    w1, x1, y1, z1 = q1
+    w2, x2, y2, z2 = q2
+    return (
+        w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+        w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+        w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+        w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+    )
+
+
+def euler_deg_to_quat(rx, ry, rz):
+    """Convert XYZ Euler angles in DEGREES to a (w, x, y, z) quaternion.
+
+    Rotation order is Rz @ Ry @ Rx (apply X, then Y, then Z about the world
+    axes). For the common 'flip an upside-down asset upright' case a single
+    180 on one axis is enough, e.g. (180, 0, 0).
+    """
+    hx, hy, hz = (math.radians(rx) / 2, math.radians(ry) / 2, math.radians(rz) / 2)
+    qx = (math.cos(hx), math.sin(hx), 0.0, 0.0)
+    qy = (math.cos(hy), 0.0, math.sin(hy), 0.0)
+    qz = (math.cos(hz), 0.0, 0.0, math.sin(hz))
+    return quat_mul(qz, quat_mul(qy, qx))
 
 
 def randomize_yaw(orientation, point_name=None, yaw_range=None):

@@ -4,7 +4,7 @@ import omni.isaac.core.utils.prims as prim_utils
 from omni.isaac.core.utils.stage import add_reference_to_stage
 from omni.isaac.core.prims import XFormPrim
 from pxr import UsdGeom, Usd, Gf
-from configs import usd_config
+from configs import usd_config, scene_config
 from configs.container_config import get_container_info
 
 class ContainerManager:
@@ -18,10 +18,18 @@ class ContainerManager:
         self._knob_threshold_rad = None
         self._knob_baseline_quat = None
 
+        # Debug: when True, respawn() also draws the interior success zone box.
+        self.debug_zone = False
+        self._zone_path = None
+
     def get_container_info(self, key=None):
         return get_container_info(key)
 
-    def respawn(self):
+    def respawn(self, override_pose=None):
+        """Spawn the active container. When `override_pose` (a (position, quat)
+        pair) is given, place it there EXACTLY with no randomization — used by
+        eval to reproduce a recorded initial_scene. Otherwise read the preset
+        point and apply the scene_config randomization."""
         info = self.get_container_info()
         if not info: return
 
@@ -34,17 +42,28 @@ class ContainerManager:
         rel_path = info.get("path", "")
         self._interior_spec = info.get("interior", "auto")
 
-        # Spawn Position (If point doesn't exists, use it)
-        spawn_pos = np.array([0.5, 0.0, 0.0])
-        spawn_rot = np.array([1.0, 0.0, 0.0, 0.0])
-        if prim_utils.is_prim_path_valid(usd_config.CONTAINER_POINT_PATH):
-            point_prim = XFormPrim(usd_config.CONTAINER_POINT_PATH)
-            spawn_pos, spawn_rot = point_prim.get_world_pose()
+        if override_pose is not None:
+            # Eval replay: place exactly at the recorded pose, no randomization.
+            spawn_pos = np.asarray(override_pose[0], dtype=np.float64)
+            spawn_rot = np.asarray(override_pose[1], dtype=np.float64)
+        else:
+            # Spawn Position (If point doesn't exists, use a default)
+            spawn_pos = np.array([0.5, 0.0, 0.0])
+            spawn_rot = np.array([1.0, 0.0, 0.0, 0.0])
+            if prim_utils.is_prim_path_valid(usd_config.CONTAINER_POINT_PATH):
+                point_prim = XFormPrim(usd_config.CONTAINER_POINT_PATH)
+                spawn_pos, spawn_rot = point_prim.get_world_pose()
 
-        # Randomize the container within a circle around its preset point,
-        # plus a random yaw about the world Z axis.
-        spawn_pos = usd_config.randomize_xy(spawn_pos, point_name="container_pos")
-        spawn_rot = usd_config.randomize_yaw(spawn_rot, point_name="container_pos")
+            # Optional euler_deg override (scene_config) replaces the preset
+            # orientation so a flipped container can be corrected upright.
+            euler = scene_config.get_container_euler_deg()
+            if euler is not None:
+                spawn_rot = np.array(usd_config.euler_deg_to_quat(*euler), dtype=np.float64)
+
+            # Randomize the container within a circle around its preset point,
+            # plus a random yaw about the world Z axis (ranges from scene_config).
+            spawn_pos = usd_config.randomize_xy(spawn_pos, radius=scene_config.get_container_radius())
+            spawn_rot = usd_config.randomize_yaw(spawn_rot, yaw_range=scene_config.get_container_yaw_range())
 
         # Spawn Container
         usd_path = os.path.join(usd_config.BASE_DIR, rel_path)
@@ -81,6 +100,87 @@ class ContainerManager:
                 self._knob_baseline_quat = baseline_quat
                 print(f"[ContainerManager] Knob baseline saved "
                       f"(subpath='{self._knob_subpath}', threshold={knob_spec.get('threshold_deg', 30.0)}°)")
+
+        if self.debug_zone:
+            self._draw_interior_zone()
+
+    def _draw_interior_zone(self):
+        """Draw the success/drop zone (the exact volume is_inside() tests) as a
+        semi-transparent green cube, for visually tuning container_config's
+        'interior'. The cube is parented under the anchor so it inherits the
+        container's world transform (scale/rotation) and therefore matches
+        is_inside() exactly — including a drawer cavity that slides with the tray.
+
+        NOTE: this is a visible mesh — it WILL show up in camera RGB. Use it for
+        manual tuning in the viewport, NOT while recording demos.
+        """
+        if self.container_prim is None:
+            return
+
+        # Clean up a previous zone box.
+        if self._zone_path and prim_utils.is_prim_path_valid(self._zone_path):
+            prim_utils.delete_prim(self._zone_path)
+            self._zone_path = None
+
+        stage = self.world.stage
+        spec = self._interior_spec
+
+        if isinstance(spec, dict):
+            ox, oy, oz = spec.get("offset", (0.0, 0.0, 0.0))
+            hx, hy, hz = spec.get("half_size", (0.1, 0.1, 0.1))
+            za = float(spec.get("z_tolerance_above", 0.0))
+            # Box spans local z in [oz-hz, oz+hz+za]; center/size reflect that.
+            center = (float(ox), float(oy), float(oz) + za / 2.0)
+            size = (2.0 * float(hx), 2.0 * float(hy), 2.0 * float(hz) + za)
+
+            anchor_sub = spec.get("anchor_subpath")
+            if anchor_sub:
+                parent = self.container_prim.prim_path.rstrip("/") + "/" + anchor_sub.lstrip("/")
+            else:
+                parent = self.container_prim.prim_path
+            cube_path = parent.rstrip("/") + "/_interior_zone_debug"
+        else:
+            # "auto": world AABB of the container + 0.5 m z headroom (matches
+            # _is_inside_aabb). Axis-aligned in world, so draw at top level.
+            prim = stage.GetPrimAtPath(self.container_prim.prim_path)
+            bound = UsdGeom.Imageable(prim).ComputeWorldBound(
+                Usd.TimeCode.Default(), UsdGeom.Tokens.default_)
+            box = bound.ComputeAlignedBox()
+            mn, mx = box.GetMin(), box.GetMax()
+            center = ((mn[0] + mx[0]) / 2.0, (mn[1] + mx[1]) / 2.0,
+                      (mn[2] + mx[2]) / 2.0 + 0.25)  # +0.5 headroom / 2
+            size = (mx[0] - mn[0], mx[1] - mn[1], (mx[2] - mn[2]) + 0.5)
+            cube_path = "/World/_interior_zone_debug"
+
+        if prim_utils.is_prim_path_valid(cube_path):
+            prim_utils.delete_prim(cube_path)
+
+        cube = UsdGeom.Cube.Define(stage, cube_path)
+        cube.CreateSizeAttr(1.0)  # unit cube; scale op sets the real extents
+        cube.AddTranslateOp().Set(Gf.Vec3d(*center))
+        cube.AddScaleOp().Set(Gf.Vec3f(*[float(c) for c in size]))
+        cube.CreateDisplayColorAttr([Gf.Vec3f(0.0, 1.0, 0.0)])
+        cube.CreateDisplayOpacityAttr([0.25])
+        self._zone_path = cube_path
+        print(f"[ContainerManager] Interior zone box drawn at {cube_path} "
+              f"(size={tuple(round(float(c), 3) for c in size)}); visible in cameras")
+
+    def get_state(self):
+        """Return the active container's name and world root_pose, or None.
+
+        root_pose is [x, y, z, qw, qx, qy, qz] (position + quaternion = position
+        & angle), used to snapshot the initial scene layout for evaluation.
+        """
+        if self.container_prim is None:
+            return None
+        pos, quat = self.container_prim.get_world_pose()
+        return {
+            "name": self.container_prim.name,
+            "root_pose": np.concatenate(
+                [np.asarray(pos, dtype=np.float64),
+                 np.asarray(quat, dtype=np.float64)]
+            ),
+        }
 
     def is_inside(self, object_pos):
         """

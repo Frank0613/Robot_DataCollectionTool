@@ -14,7 +14,7 @@ import omni.isaac.core.utils.prims as prim_utils
 from omni.isaac.core.utils.stage import add_reference_to_stage
 from omni.isaac.core.prims import XFormPrim
 from pxr import UsdGeom, Usd, Gf
-from configs import usd_config
+from configs import usd_config, scene_config
 
 
 FIXTURE_PRIM_PATH = "/World/SupportFixture"
@@ -147,10 +147,10 @@ class FixtureManager:
                 dz = float(override.get("z_offset", 0.0))
                 pos = np.array([pos[0] + dx, pos[1] + dy, pos[2] + dz])
             # Randomize the target within a circle around its preset point,
-            # plus a random yaw about the world Z axis.
+            # plus a random yaw about the world Z axis (ranges from scene_config).
             pos = usd_config.randomize_xy(np.asarray(pos, dtype=np.float64),
-                                          point_name="target_point")
+                                          radius=scene_config.get_radius("target_point"))
             quat = usd_config.randomize_yaw(np.asarray(quat, dtype=np.float64),
-                                            point_name="target_point")
+                                            yaw_range=scene_config.get_yaw_range("target_point"))
             return np.asarray(pos, dtype=np.float64), np.asarray(quat, dtype=np.float64)
         return None, None

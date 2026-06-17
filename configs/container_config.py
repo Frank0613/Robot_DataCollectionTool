@@ -27,9 +27,9 @@ CONTAINERS = {
         "path": "usdfiles/containers/plate.usd",
         "interior": {
             "anchor_subpath": None,
-            "offset":    (0.0, 0.0, 0.05),
-            "half_size": (0.12, 0.12, 0.03),
-            "z_tolerance_above": 0.3,
+            "offset":    (0.0, 0.0, 0.02),
+            "half_size": (0.12, 0.12, 0.025),
+            "z_tolerance_above": 0.0,
         },
     },
     "stove": {

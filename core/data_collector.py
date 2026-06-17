@@ -2,12 +2,14 @@ import os
 import h5py
 import numpy as np
 import json
-from omni.isaac.core.prims import RigidPrim
+from omni.isaac.core.prims import RigidPrim, XFormPrim
+from omni.isaac.core.utils.prims import is_prim_path_valid
 from pxr import Usd, UsdPhysics
 from configs import task_config
 
 class DataCollector:
-    def __init__(self, save_dir="datasets", filename="dataset.hdf5", env_name="Default_Scene", enabled=True):
+    def __init__(self, save_dir="datasets", filename="dataset.hdf5", env_name="Default_Scene",
+                 enabled=True, config_signature=None):
         self.enabled = enabled
         self.recording = False
         self.current_demo_data = []
@@ -22,10 +24,20 @@ class DataCollector:
             print("[DataCollector] Disabled (inference mode) — no data will be recorded")
             return
 
+        # A run's config signature ties a dataset file to one object/container/
+        # scene/task combination. When appending to an existing file whose
+        # signature differs, we auto-route to a fresh file (dataset_2.hdf5, ...)
+        # so a single file never mixes layouts (which would desync the one-shot
+        # initial_scene / language_instruction used for eval reproduction).
+        self._signature = (
+            json.dumps(config_signature, sort_keys=True)
+            if config_signature is not None else None
+        )
+
         self.save_dir = save_dir
         if not os.path.exists(self.save_dir):
             os.makedirs(self.save_dir)
-        self.filepath = os.path.join(self.save_dir, filename)
+        self.filepath = self._resolve_filepath(os.path.join(self.save_dir, filename))
 
         # Init file if not exists
         with h5py.File(self.filepath, 'a') as f:
@@ -34,6 +46,43 @@ class DataCollector:
                 env_args = {"env_name": env_name}
                 data_group.attrs['env_args'] = json.dumps(env_args)
                 data_group.attrs['total'] = 0
+                if self._signature is not None:
+                    data_group.attrs['config_signature'] = self._signature
+
+        print(f"[DataCollector] Recording to {self.filepath}")
+
+    def _file_is_compatible(self, path):
+        """True if `path` can receive demos for the current run: an empty/new
+        file, or one whose stored config_signature matches this run's. A file
+        with data but a different (or missing) signature is incompatible."""
+        try:
+            with h5py.File(path, 'r') as f:
+                if 'data' not in f or 'total' not in f['data'].attrs:
+                    return True
+                if int(f['data'].attrs['total']) == 0:
+                    return True
+                stored = f['data'].attrs.get('config_signature')
+                return stored is not None and stored == self._signature
+        except Exception:
+            return False
+
+    def _resolve_filepath(self, base_path):
+        """Pick the dataset file for this run. Same config -> reuse the matching
+        file; different config -> the next free/compatible suffixed name."""
+        if self._signature is None:
+            return base_path
+        if not os.path.exists(base_path) or self._file_is_compatible(base_path):
+            return base_path
+
+        root, ext = os.path.splitext(base_path)
+        idx = 2
+        while True:
+            candidate = f"{root}_{idx}{ext}"
+            if not os.path.exists(candidate) or self._file_is_compatible(candidate):
+                print(f"[DataCollector] Config differs from {os.path.basename(base_path)}; "
+                      f"using {os.path.basename(candidate)} instead")
+                return candidate
+            idx += 1
 
     def _get_real_name(self, robot_controller, spawn_obj_name):
         """get the actual object name inside the USD (RigidBodyAPI name)"""
@@ -50,15 +99,19 @@ class DataCollector:
         
         return spawn_obj_name 
     
-    def capture_initial_state(self, robot_controller, spawner):
+    def capture_initial_state(self, robot_controller, spawner, container_manager=None):
         """capture initial state of robot and spawned objects"""
         snapshot = {
             "robot": {
                 "root_pose": None,
                 "root_vel": None
             },
-            "objects": {}
+            "objects": {},
+            "container": None
         }
+
+        if container_manager is not None:
+            snapshot["container"] = container_manager.get_state()
         
         pos, quat = robot_controller.franka.get_world_pose()
         snapshot["robot"]["root_pose"] = np.concatenate([pos, quat])
@@ -68,9 +121,15 @@ class DataCollector:
         ])
         stage = robot_controller.world.stage
 
-        for obj_name in spawner.spawned_objects:
+        # Capture every background object plus the target, so the very first
+        # demo can record a full snapshot of the initial scene layout.
+        obj_names = list(spawner.spawned_objects)
+        if spawner.target_object and spawner.target_object not in obj_names:
+            obj_names.append(spawner.target_object)
+
+        for obj_name in obj_names:
             real_name = self._get_real_name(robot_controller, obj_name)
-    
+
             scene_obj = robot_controller.world.scene.get_object(obj_name)
             stage = robot_controller.world.stage
             base_prim = stage.GetPrimAtPath(scene_obj.prim_path)
@@ -84,11 +143,22 @@ class DataCollector:
             if target_rb_prim:
                 rb_path = str(target_rb_prim.GetPath())
                 temp_rb = RigidPrim(prim_path=rb_path, name="temp_fetch")
-                
+
+                # Pose of the reference ROOT prim we actually placed at spawn
+                # (/World/<obj_name>). initial_scene must record THIS (not the
+                # inner rigid body) so eval replay — which sets the root — round
+                # trips exactly. Falls back to the rigid body pose if absent.
+                spawn_root_pose = None
+                root_path = f"/World/{obj_name}"
+                if is_prim_path_valid(root_path):
+                    rpos, rquat = XFormPrim(prim_path=root_path).get_world_pose()
+                    spawn_root_pose = np.concatenate([rpos, rquat])
+
                 snapshot["objects"][obj_name] = {
                     "child_name": real_name,
                     "root_pose": np.concatenate(temp_rb.get_world_pose()),
-                    "root_velocity": np.concatenate([temp_rb.get_linear_velocity(), temp_rb.get_angular_velocity()])
+                    "root_velocity": np.concatenate([temp_rb.get_linear_velocity(), temp_rb.get_angular_velocity()]),
+                    "spawn_root_pose": spawn_root_pose,
                 }
         
         self.initial_state_snapshot = snapshot
@@ -118,7 +188,7 @@ class DataCollector:
             self.step_counter += 1
             
             if not self.current_demo_data:
-                self.capture_initial_state(robot_controller, spawner)
+                self.capture_initial_state(robot_controller, spawner, container_manager)
 
             lin_vel = robot_controller.franka.get_linear_velocity()
             ang_vel = robot_controller.franka.get_angular_velocity()
@@ -209,6 +279,58 @@ class DataCollector:
     def _get_spawner_bg_map(self, spawner):
         return getattr(spawner, "bg_class_by_point", {}) or {}
 
+    def _write_initial_scene(self, root, spawner):
+        """Record the FIRST demo's scene layout under data/initial_scene.
+
+        For each background point and the target, store the object class name
+        (USD filename stem) and its initial root_pose (position + quaternion =
+        position & angle). Written only once per file so evaluation can later
+        reproduce the exact starting configuration. Subsequent demos skip this.
+        """
+        if self.initial_state_snapshot is None:
+            return
+
+        scene_group = root.create_group('initial_scene')
+        snapshot_objs = self.initial_state_snapshot.get("objects", {})
+
+        # role -> class name map, e.g. {"point_front": "apple", "target": "red_cube"}
+        roles = {}
+
+        def _spawn_pose(obj_name):
+            """Pose of the reference root prim we placed at spawn (what eval
+            replay re-applies). Falls back to the rigid body pose if unavailable."""
+            info = snapshot_objs[obj_name]
+            pose = info.get("spawn_root_pose")
+            if pose is None:
+                pose = info["root_pose"]
+            return np.asarray(pose, dtype=np.float32)
+
+        # Background objects, keyed by their spawn point (point_front/left/right).
+        bg_map = self._get_spawner_bg_map(spawner)
+        for point_name, class_name in bg_map.items():
+            obj_name = f"spawned_obj_{point_name}"
+            roles[point_name] = class_name
+            if obj_name in snapshot_objs:
+                scene_group.create_dataset(f"{point_name}/root_pose", data=_spawn_pose(obj_name))
+
+        # Target object.
+        target_class = spawner.get_target_class_name()
+        if target_class is not None:
+            roles["target"] = target_class
+        target_obj_name = spawner.target_object
+        if target_obj_name in snapshot_objs:
+            scene_group.create_dataset("target/root_pose", data=_spawn_pose(target_obj_name))
+
+        # Container (position & angle), so evaluation can restore it too.
+        container_state = self.initial_state_snapshot.get("container")
+        if container_state is not None:
+            roles["container"] = container_state["name"]
+            pose = np.asarray(container_state["root_pose"], dtype=np.float32)
+            scene_group.create_dataset("container/root_pose", data=pose)
+
+        scene_group.attrs['objects'] = json.dumps(roles)
+        print(f"[DataCollector] Initial scene layout recorded: {roles}")
+
     def save_demo(self, controller, spawner, success_obj_name,
                   container_name="container", success=True,
                   occlusion_rates=None, fixture_name=None, task_profile=None):
@@ -240,20 +362,28 @@ class DataCollector:
             demo_group.attrs['num_samples'] = len(self.current_demo_data)
             demo_group.attrs['success'] = success
 
-            # Build instruction from task profile
-            instr_text = ""
-            if task_profile is not None:
-                try:
-                    instr_text = task_config.build_instruction_from_task(
-                        task_profile,
-                        container_name=container_name,
-                        target_obj_name=display_name,
-                        fixture_name=fixture_name,
-                        bg_class_by_point=self._get_spawner_bg_map(spawner),
-                    )
-                except Exception as e:
-                    instr_text = f"<instruction build failed: {e}>"
-            demo_group.attrs['language_instruction'] = instr_text
+            # Build instruction from task profile. Every demo in a dataset shares
+            # the same instruction, so it lives on the top-level data group and
+            # is written only once (from the first saved demo).
+            if 'language_instruction' not in root.attrs:
+                instr_text = ""
+                if task_profile is not None:
+                    try:
+                        instr_text = task_config.build_instruction_from_task(
+                            task_profile,
+                            container_name=container_name,
+                            target_obj_name=display_name,
+                            fixture_name=fixture_name,
+                            bg_class_by_point=self._get_spawner_bg_map(spawner),
+                        )
+                    except Exception as e:
+                        instr_text = f"<instruction build failed: {e}>"
+                root.attrs['language_instruction'] = instr_text
+
+            # Record the initial scene layout once, from the first saved demo,
+            # so evaluation can reproduce the exact starting configuration.
+            if 'initial_scene' not in root:
+                self._write_initial_scene(root, spawner)
 
             # --- Occlusion Rate Attribute ---
             if occlusion_rates is not None:
