@@ -130,10 +130,13 @@ class DataCollector:
         for obj_name in obj_names:
             real_name = self._get_real_name(robot_controller, obj_name)
 
-            scene_obj = robot_controller.world.scene.get_object(obj_name)
             stage = robot_controller.world.stage
-            base_prim = stage.GetPrimAtPath(scene_obj.prim_path)
-            
+            # Search from the loaded root prim (/World/<obj_name>) — where
+            # add_reference_to_stage mounts the whole USD — instead of the
+            # registered imageable child, so the rigid body is found regardless
+            # of each object's internal prim hierarchy.
+            base_prim = stage.GetPrimAtPath(f"/World/{obj_name}")
+
             target_rb_prim = None
             for prim in Usd.PrimRange(base_prim):
                 if prim.HasAPI(UsdPhysics.RigidBodyAPI):
@@ -217,7 +220,9 @@ class DataCollector:
                 
                 if scene_obj:
                     stage = robot_controller.world.stage
-                    base_prim = stage.GetPrimAtPath(scene_obj.prim_path)
+                    # Search from the loaded root prim (see capture_initial_state)
+                    # so the rigid body is found whatever the object's hierarchy.
+                    base_prim = stage.GetPrimAtPath(f"/World/{obj_name_id}")
                     target_rb_prim = None
                     for prim in Usd.PrimRange(base_prim):
                         if prim.HasAPI(UsdPhysics.RigidBodyAPI):
