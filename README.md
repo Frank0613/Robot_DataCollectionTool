@@ -12,7 +12,7 @@ All commands assume Windows + Isaac Sim launcher `./run.bat` in the repo root.
 Full command with every applicable flag:
 
 ```powershell
-./run.bat --task in_drawer --scene warehouse --mode ik --out my_run --debug
+./run.bat --task in_drawer --scene Warehouse --mode ik --out my_run --debug
 ```
 
 A task supplies the **instruction + special behavior**. The **object layout and
@@ -20,7 +20,7 @@ container are deterministic** — you set them in `configs/scene_config.py` (see
 section 2), not on the command line. The same task works across scenes:
 
 ```powershell
-./run.bat --task behind_named --scene warehouse
+./run.bat --task behind_named --scene Warehouse
 ./run.bat --task behind_named --scene home_cabinet
 ```
 
@@ -32,7 +32,7 @@ section 2), not on the command line. The same task works across scenes:
 | Flag           | Example            | What it does |
 |----------------|--------------------|--------------|
 | `--task`       | `--task in_drawer` | **Required for collection**: selects the instruction + special settings. Must be a key in `task_config.TASKS`. See section 4. |
-| `--scene`      | `--scene warehouse` | Which USD scene to load (file under `usdfiles/scenes/`). Defaults to the value in `configs/usd_config.py`. |
+| `--scene`      | `--scene Warehouse` | Which USD scene to load (file under `usdfiles/scenes/`). Defaults to the value in `configs/usd_config.py`. |
 | `--out`        | `--out my_run`     | Output dataset name → `datasets/<name>.hdf5` (default `dataset`). If that file already holds demos from a **different** config, an auto-suffixed file (`<name>_2.hdf5`, …) is used so one file never mixes layouts. |
 | `--mode`       | `--mode ik`        | Controller type: `ik` (default) or `rmpflow`. |
 | `--show-zone`  | `--show-zone`      | Draw the container's interior success/drop zone as a translucent box, to tune `container_config` `interior`. **The box shows up in camera RGB — tuning only, never while recording.** |
@@ -93,7 +93,7 @@ Eval is **keyboard-controlled** (same input path as collection; the ROS bridge
 is currently removed). Full command with every applicable flag:
 
 ```powershell
-./run.bat --eval --task basic --scene warehouse --dataset my_run --headless --max-steps 600 --trials 20 --save_video
+./run.bat --eval --task basic --scene Warehouse --dataset my_run --headless --max-steps 600 --trials 20 --save_video
 ```
 
 (`--eval` alone = no recording, no stats. Add `--max-steps` to enable the
@@ -115,7 +115,7 @@ the dataset, overriding `scene_config`.
 | `--eval`       | `--eval`           | Eval mode: **no data is recorded** (replaces the old `--inference`). |
 | `--dataset`    | `--dataset my_run` | Reproduce the `initial_scene` recorded in `datasets/<name>.hdf5` (see above). |
 | `--task`       | `--task basic`     | Selects the instruction + special settings (see section 4). Still needed: success rules + instruction live in the task. |
-| `--scene`      | `--scene warehouse` | Which USD scene to load. |
+| `--scene`      | `--scene Warehouse` | Which USD scene to load. |
 | `--headless`   | `--headless`       | Run Isaac Sim with no GUI viewport (recommended for eval; avoids RTX viewport init crashes). |
 | `--mode`       | `--mode ik`        | Controller type: `ik` (default) or `rmpflow`. |
 | `--max-steps`  | `--max-steps 600`  | Per-trial step timeout. Exceeding it = `timeout` (a counted failure). Enables trial stats. |
@@ -167,7 +167,7 @@ from `configs/scene_config.py` (section 2). So one task (e.g. `behind_named`)
 works across every scene/layout combo without duplication:
 
 ```powershell
-./run.bat --task behind_named --scene warehouse
+./run.bat --task behind_named --scene Warehouse
 ./run.bat --task behind_named --scene home_cabinet
 ```
 
@@ -181,7 +181,7 @@ For ordinary pick-and-place tasks, that's the whole entry:
 },
 ```
 
-Run it: `./run.bat --task behind_named --scene warehouse`. Done — no edits to `main.py` or any core file.
+Run it: `./run.bat --task behind_named --scene Warehouse`. Done — no edits to `main.py` or any core file.
 
 ### Instruction slots
 
@@ -241,7 +241,7 @@ All fields except `instruction` are optional — add them only when the task nee
 },
 ```
 
-Run: `./run.bat --task in_drawer --scene warehouse` (set objects + the `drawer`
+Run: `./run.bat --task in_drawer --scene Warehouse` (set objects + the `drawer`
 container in `configs/scene_config.py`)
 
 ### Example: knob task (no placement, no occlusion)
@@ -255,7 +255,7 @@ container in `configs/scene_config.py`)
 },
 ```
 
-Run: `./run.bat --task stove_turn --scene warehouse` (set the `stove` container
+Run: `./run.bat --task stove_turn --scene Warehouse` (set the `stove` container
 in `configs/scene_config.py`; its knob spec lives in
 `configs/container_config.py`).
 
