@@ -16,6 +16,13 @@ ACTIVE_TASK = None
 #   instruction      : str  - the full instruction sentence with {obj}, {container}, etc.
 #   support_fixture  : dict - (optional) dynamic fixture to spawn. Contains:
 #     usd, anchor_point, name, scale, hide_init
+#     euler_deg : (optional) [rx, ry, rz] degrees REPLACING the anchor's
+#                 orientation, e.g. lay a box on its face with [90, 0, 0].
+#     z_offset  : (optional) meters to raise the fixture so a laid-down asset
+#                 rests on the table instead of sinking through it.
+#     randomize : (optional) if True, jitter the fixture's XY + yaw each reset
+#                 using the anchor point's radius/yaw_range from scene_config
+#                 (the target on top follows). Default False (fixed placement).
 #     (object selection is deterministic via configs/scene_config.py)
 #   spawn_overrides  : dict - (optional) per-point position/orientation deltas
 #   bg_skip          : list - (optional) background spawn points to leave empty
@@ -64,6 +71,40 @@ TASKS = {
             "name": "pan",
         },
         "target_offset_above_fixture": 0.10,
+    },
+
+    # green mug sits on top of a (laid-down) cracker box, placed on the plate.
+    # The box is tipped onto its face via euler_deg and lifted so it rests on
+    # the table; tune euler_deg / z_offset / target_offset_above_fixture in-sim.
+    "on_pan": {
+        "instruction": "pick up the {obj} on the {fixture} and place it on the {container}",
+        "support_fixture": {
+            "usd": "usdfiles/fixtures/pan.usd",
+            "anchor_point": "target_point",
+            "name": "pan",
+            "euler_deg": [0, 0, 0],
+            "z_offset": 0.03,
+            "randomize": True,   # jitter box XY+yaw each reset (mug follows)
+        },
+        "target_offset_above_fixture": 0.07,
+    },
+
+    # target sits on TOP of the (closed) white cabinet, placed on the container.
+    # Cabinet is tall, so target_offset_above_fixture must reach its top surface;
+    # tune target_offset_above_fixture / z_offset in-sim.
+    "on_cabinet": {
+        "instruction": "pick up the {obj} on the {fixture} and place it on the {container}",
+        "support_fixture": {
+            "usd": "usdfiles/cabinet/white_cabinet.usd",
+            "anchor_point": "target_point",
+            "name": "white_cabinet",
+            "scale": 0.9,
+            "euler_deg": [0, 0, 0],
+            "z_offset": -0.05,
+            "randomize": True,   # jitter cabinet XY+yaw each reset (target follows)
+            "hide_init": True,
+        },
+        "target_offset_above_fixture": 0.2,
     },
 
     "in_drawer": {

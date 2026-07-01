@@ -99,7 +99,8 @@ class DataCollector:
         
         return spawn_obj_name 
     
-    def capture_initial_state(self, robot_controller, spawner, container_manager=None):
+    def capture_initial_state(self, robot_controller, spawner, container_manager=None,
+                              fixture_manager=None):
         """capture initial state of robot and spawned objects"""
         snapshot = {
             "robot": {
@@ -107,11 +108,15 @@ class DataCollector:
                 "root_vel": None
             },
             "objects": {},
-            "container": None
+            "container": None,
+            "fixture": None
         }
 
         if container_manager is not None:
             snapshot["container"] = container_manager.get_state()
+
+        if fixture_manager is not None:
+            snapshot["fixture"] = fixture_manager.get_state()
         
         pos, quat = robot_controller.franka.get_world_pose()
         snapshot["robot"]["root_pose"] = np.concatenate([pos, quat])
@@ -182,16 +187,16 @@ class DataCollector:
         except Exception:
             return 0
 
-    def collect_frame(self, robot_controller, delta_pos, delta_rot, gripper_cmd, spawner, camera_manager, container_manager=None):
+    def collect_frame(self, robot_controller, delta_pos, delta_rot, gripper_cmd, spawner, camera_manager, container_manager=None, fixture_manager=None):
             if not self.enabled:
                 return
             if robot_controller.franka is None:
                 return
 
             self.step_counter += 1
-            
+
             if not self.current_demo_data:
-                self.capture_initial_state(robot_controller, spawner, container_manager)
+                self.capture_initial_state(robot_controller, spawner, container_manager, fixture_manager)
 
             lin_vel = robot_controller.franka.get_linear_velocity()
             ang_vel = robot_controller.franka.get_angular_velocity()
@@ -332,6 +337,15 @@ class DataCollector:
             roles["container"] = container_state["name"]
             pose = np.asarray(container_state["root_pose"], dtype=np.float32)
             scene_group.create_dataset("container/root_pose", data=pose)
+
+        # Support fixture (e.g. the box the target sits on). Recording its pose
+        # lets eval replay put it back under the recorded target, even when the
+        # fixture is randomized each reset.
+        fixture_state = self.initial_state_snapshot.get("fixture")
+        if fixture_state is not None:
+            roles["fixture"] = fixture_state["name"]
+            pose = np.asarray(fixture_state["root_pose"], dtype=np.float32)
+            scene_group.create_dataset("fixture/root_pose", data=pose)
 
         scene_group.attrs['objects'] = json.dumps(roles)
         print(f"[DataCollector] Initial scene layout recorded: {roles}")

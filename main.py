@@ -172,6 +172,7 @@ def main():
     # The dataset's container overrides scene_config's choice.
     eval_scene = None
     eval_container_pose = None
+    eval_fixture_pose = None
     if args.eval_mode and args.dataset is not None:
         dataset_path = os.path.join("datasets", f"{args.dataset}.hdf5")
         eval_scene = load_initial_scene(dataset_path)
@@ -190,6 +191,10 @@ def main():
             if container_entry.get("pose") is not None:
                 cp = container_entry["pose"]
                 eval_container_pose = (cp[:3], cp[3:7])
+        fixture_entry = eval_scene.get("fixture")
+        if fixture_entry is not None and fixture_entry.get("pose") is not None:
+            fp = fixture_entry["pose"]
+            eval_fixture_pose = (fp[:3], fp[3:7])
         print(f"[Main] Eval replay enabled from dataset '{args.dataset}'")
 
     # Load scene
@@ -273,7 +278,7 @@ def main():
                 # First reset: reproduce the recorded layout EXACTLY (same
                 # objects + container at the same positions/angles), no randomization.
                 container_mgr.respawn(override_pose=eval_container_pose)
-                fixture_mgr.respawn()
+                fixture_mgr.respawn(override_pose=eval_fixture_pose)
                 spawner.respawn_from_scene(eval_scene)
                 eval_replay_done = True
             else:
@@ -490,7 +495,7 @@ def main():
                 recorder.capture(camera_mgr.get_all_camera_data())
 
             if data_collector.recording:
-                data_collector.collect_frame(controller, delta_pos, delta_rot, gripper_cmd, spawner, camera_mgr, container_mgr)
+                data_collector.collect_frame(controller, delta_pos, delta_rot, gripper_cmd, spawner, camera_mgr, container_mgr, fixture_mgr)
                 # First frame just landed -> save a preview PNG so the user can
                 # eyeball the camera views and press N/R immediately if broken.
                 if len(data_collector.current_demo_data) == 1:

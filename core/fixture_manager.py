@@ -35,6 +35,20 @@ class FixtureManager:
             return None
         return self._spec.get("name")
 
+    def get_state(self):
+        """Current fixture pose for initial_scene recording, or None when there
+        is no fixture / it hasn't spawned yet. Mirrors ContainerManager.get_state.
+        Returns {"name": str, "root_pose": np.ndarray(7,) [x,y,z,qw,qx,qy,qz]}."""
+        if not self._spec or self.fixture_prim is None:
+            return None
+        pos, quat = self.fixture_prim.get_world_pose()
+        return {
+            "name": self._spec.get("name", "fixture"),
+            "root_pose": np.concatenate(
+                [np.asarray(pos, dtype=np.float64), np.asarray(quat, dtype=np.float64)]
+            ),
+        }
+
     def make_invisible(self):
         """Hide the fixture from rendering."""
         if self.fixture_prim is not None:
@@ -59,9 +73,14 @@ class FixtureManager:
         name = self._spec.get("name")
         return [name] if name else []
 
-    def respawn(self):
+    def respawn(self, override_pose=None):
         """Re-spawn the fixture at its anchor_point. Safe to call every reset.
-        No-op when the task profile has no support_fixture."""
+        No-op when the task profile has no support_fixture.
+
+        override_pose: optional (pos[3], quat[4 w-first]) placing the fixture
+        EXACTLY (eval replay reproducing a recorded scene). Skips euler_deg,
+        z_offset and per-reset randomization so the box lands back under the
+        recorded target."""
         if not self._spec:
             return
 
@@ -73,14 +92,44 @@ class FixtureManager:
         anchor_point = self._spec.get("anchor_point", "target_point")
         name = self._spec.get("name", "fixture")
 
-        anchor_path = f"{usd_config.OBJ_SPAWN_POINT_ROOT}/{anchor_point}"
-        if not prim_utils.is_prim_path_valid(anchor_path):
-            print(f"[FixtureManager] Warning: anchor point '{anchor_path}' not "
-                  f"found in scene; falling back to (0.5, 0, 0)")
-            spawn_pos = np.array([0.5, 0.0, 0.0])
-            spawn_rot = np.array([1.0, 0.0, 0.0, 0.0])
+        if override_pose is not None:
+            # Eval replay: exact recorded pose, no randomization.
+            spawn_pos = np.asarray(override_pose[0], dtype=np.float64)
+            spawn_rot = np.asarray(override_pose[1], dtype=np.float64)
         else:
-            spawn_pos, spawn_rot = XFormPrim(anchor_path).get_world_pose()
+            anchor_path = f"{usd_config.OBJ_SPAWN_POINT_ROOT}/{anchor_point}"
+            if not prim_utils.is_prim_path_valid(anchor_path):
+                print(f"[FixtureManager] Warning: anchor point '{anchor_path}' not "
+                      f"found in scene; falling back to (0.5, 0, 0)")
+                spawn_pos = np.array([0.5, 0.0, 0.0])
+                spawn_rot = np.array([1.0, 0.0, 0.0, 0.0])
+            else:
+                spawn_pos, spawn_rot = XFormPrim(anchor_path).get_world_pose()
+
+            # Optional euler_deg override replaces the anchor's orientation so an
+            # asset can be laid down / tipped over (e.g. stand a box on its face).
+            euler = self._spec.get("euler_deg")
+            if euler is not None:
+                spawn_rot = np.array(usd_config.euler_deg_to_quat(*euler), dtype=np.float64)
+
+            # Optional z lift (meters) so a laid-down fixture rests on the table
+            # surface instead of sinking through it.
+            z_offset = self._spec.get("z_offset")
+            if z_offset is not None:
+                spawn_pos = np.array([spawn_pos[0], spawn_pos[1], spawn_pos[2] + float(z_offset)])
+
+            # Opt-in per-reset randomization (data augmentation): jitter the
+            # fixture's XY + yaw using the anchor point's ranges from
+            # scene_config. The target reads the fixture's world pose, so the
+            # object on top follows the box. Off by default so other fixture
+            # tasks (pan, cabinet) keep their fixed placement.
+            if self._spec.get("randomize", False):
+                spawn_pos = usd_config.randomize_xy(
+                    np.asarray(spawn_pos, dtype=np.float64),
+                    radius=scene_config.get_radius(anchor_point))
+                spawn_rot = usd_config.randomize_yaw(
+                    np.asarray(spawn_rot, dtype=np.float64),
+                    yaw_range=scene_config.get_yaw_range(anchor_point))
 
         usd_path = os.path.join(usd_config.BASE_DIR, rel_usd)
         add_reference_to_stage(usd_path=usd_path, prim_path=FIXTURE_PRIM_PATH)
@@ -132,9 +181,21 @@ class FixtureManager:
             return pos, np.asarray(quat, dtype=np.float64)
 
         if above is not None and self.fixture_prim is not None:
-            fpos, fquat = self.fixture_prim.get_world_pose()
+            fpos, _ = self.fixture_prim.get_world_pose()
             pos = np.array([fpos[0], fpos[1], fpos[2] + float(above)])
-            return pos, np.asarray(fquat, dtype=np.float64)
+            # The target's orientation must be INDEPENDENT of the fixture's:
+            # when the fixture is tipped via euler_deg, the object resting on
+            # top should still stand upright. Take orientation from the anchor
+            # point (optionally overridden by scene_config euler_deg for
+            # target_point), never from the (possibly tipped) fixture quat.
+            euler = scene_config.get_euler_deg("target_point")
+            if euler is not None:
+                quat = np.array(usd_config.euler_deg_to_quat(*euler), dtype=np.float64)
+            elif prim_utils.is_prim_path_valid(fallback_point_path):
+                _, quat = XFormPrim(fallback_point_path).get_world_pose()
+            else:
+                quat = np.array([1.0, 0.0, 0.0, 0.0])
+            return pos, np.asarray(quat, dtype=np.float64)
 
         # No fixture-driven rule: defer to the scene's target_point
         if prim_utils.is_prim_path_valid(fallback_point_path):
