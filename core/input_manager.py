@@ -13,14 +13,18 @@ class InputManager:
         self.prev_k_state = False
         self.prev_r_state = False
         self.prev_n_state = False
+        self.prev_p_state = False
 
     def get_command(self):
         """
-        Return delta pos, delta rot, gripper state, reset cmd, fail cmd, is_any_action.
+        Return delta pos, delta rot, gripper state, reset cmd, fail cmd,
+        is_any_action, finish cmd.
         fail_cmd is an edge-triggered signal from the N key, used to save the
-        current demo as a failure and reset. (F is not used because the
-        Omniverse viewport binds it to "Frame Selected", which moves the
-        perspective camera.)
+        current demo as a failure and reset. finish_cmd is an edge-triggered
+        signal from the P key: in collection mode it ends the session cleanly
+        (so occlusion can be computed offline while the app is still alive).
+        (F is not used because the Omniverse viewport binds it to "Frame
+        Selected", which moves the perspective camera.)
         """
         delta = np.zeros(3)
         delta_rot = np.zeros(3)
@@ -89,4 +93,12 @@ class InputManager:
             fail_cmd = True
         self.prev_n_state = n_pressed
 
-        return delta, delta_rot, gripper_cmd, reset_cmd, fail_cmd, is_any_action
+        # Finish Command (P key) - edge triggered. Ends the collection session
+        # cleanly. Not counted as is_any_action so it never starts recording.
+        finish_cmd = False
+        p_pressed = self._input.get_keyboard_value(self._keyboard, carb.input.KeyboardInput.P)
+        if p_pressed and not self.prev_p_state:
+            finish_cmd = True
+        self.prev_p_state = p_pressed
+
+        return delta, delta_rot, gripper_cmd, reset_cmd, fail_cmd, is_any_action, finish_cmd

@@ -1,36 +1,12 @@
 import argparse
 import os
+import signal
 import sys
 
 from tools.hdf5_reader import print_structure_by_path
 from tools.hdf5_checker import visualize_hdf5_cameras_by_path
 from tools.hdf5_video import visualize_hdf5_demo_as_video, export_hdf5_demo_frames
-from core.occlusion_calculator import OcclusionCalculator
 from core.inference_stats import InferenceStats
-
-
-def _set_render_visibility(stage, path_or_name, visible):
-    """Toggle render visibility of a prim subtree (visibility only — physics
-    colliders are unaffected). Accepts an exact prim path or a bare prim name
-    (searched across the stage). Returns True if a matching prim was found."""
-    from pxr import UsdGeom
-    prim = stage.GetPrimAtPath(path_or_name)
-    if not prim.IsValid():
-        prim = None
-        for p in stage.Traverse():
-            if p.GetName() == path_or_name:
-                prim = p
-                break
-    if prim is None or not prim.IsValid():
-        return False
-    imageable = UsdGeom.Imageable(prim)
-    if not imageable:
-        return False
-    if visible:
-        imageable.MakeVisible()
-    else:
-        imageable.MakeInvisible()
-    return True
 
 
 def main():
@@ -63,6 +39,9 @@ def main():
     parser.add_argument("--headless", action="store_true",
                         help="Run Isaac Sim without the GUI viewport (recommended for eval; "
                              "avoids RTX viewport init crashes).")
+    parser.add_argument("--profile", action="store_true",
+                        help="Print rolling per-phase timings (input/control/render/collect/"
+                             "camera/termination) every 60 frames to diagnose FPS.")
     parser.add_argument("--max-steps", dest="max_steps", type=int, default=None,
                         help="Per-trial step timeout (eval mode only). Required to enable stats.")
     parser.add_argument("--trials", type=int, default=None,
@@ -118,7 +97,13 @@ def main():
     from core.data_collector import DataCollector
     from core.camera_manager import CameraManager
     from core.eval_scene import load_initial_scene
+    from core.profiler import profiler
     import omni.kit.app
+
+    profiler.enabled = args.profile
+    if args.profile:
+        print(f"[Main] Profiling enabled — per-phase timings every 60 frames "
+              f"-> log: {profiler.log_path}")
     
     param_mapping = {
         "mode": "CONTROLLER_MODE",
@@ -294,112 +279,24 @@ def main():
             current_occlusion_rates = None
             return
 
-        # Tasks that opt out of occlusion (e.g. knob tasks have no target to
-        # occlude). Spawn everything in one shot and skip the two-phase capture.
-        if active_task and active_task.get("skip_occlusion", False):
-            camera_mgr.initialize_cameras(force=True)
-            container_mgr.respawn()
-            fixture_mgr.respawn()
-            spawner.spawn_target_only()
-            spawner.spawn_remaining_objects()
-            for _ in range(13):
-                world.step(render=True)
-            current_occlusion_rates = None
-            print("[Main] Occlusion calc skipped (task opted out via skip_occlusion)")
-            return
-
-        # Collection mode: rebuild cameras each reset so the semantic
-        # segmentation annotator sees the new scene's labels for occlusion.
-        camera_mgr.initialize_cameras(force=True)
-
-        # === Phase 1: spawn target only ===
+        # Collection mode: occlusion rates are computed OFFLINE afterwards
+        # (tools/compute_occlusion.py) from each demo's recorded initial layout,
+        # so the hot loop no longer rebuilds cameras or renders a semantic-
+        # segmentation pass every frame — that per-reset rebuild leaked render
+        # products and made recording get slower over time. Cameras are now
+        # built ONCE and kept stable (force=False) — the same fast, flicker-free
+        # path eval uses — and every object spawns in a single shot (no
+        # two-phase baseline capture, no occluder hiding).
+        camera_mgr.initialize_cameras()          # idempotent: build once, stay stable
         container_mgr.respawn()
         fixture_mgr.respawn()
         spawner.spawn_target_only()
-
-        # Hide static occluders (scene-baked names from usd_config + per-task
-        # fixture names) IMMEDIATELY — before any settle/render — so they are
-        # never shown during setup (the target just looks like it floats).
-        # Visibility only -> colliders stay active, so the target still settles
-        # onto the now-invisible surface.
-        hide_names = list(getattr(usd_config, "OCCLUSION_HIDE_PRIMS", []))
-
-        # Check if fixture should be hidden during Phase 1
-        fixture_hide_init = (
-            active_task and
-            active_task.get("support_fixture", {}).get("hide_init", False)
-        )
-        fixture_names = fixture_mgr.get_occlusion_hide_names()
-        if fixture_hide_init:
-            # Don't use occlusion hide for fixture; we'll control it manually
-            # via fixture_mgr.make_invisible/visible
-            fixture_mgr.make_invisible()
-        else:
-            hide_names.extend(fixture_names)
-
-        hidden = []
-        for name in hide_names:
-            if _set_render_visibility(world.stage, name, visible=False):
-                hidden.append(name)
-        if hidden:
-            print(f"[Occlusion] Hidden for baseline: {hidden}")
-
-        for _ in range(8):
-            world.step(render=True)
-
-        target_class = spawner.get_target_class_name()
-        if target_class is None:
-            print("[Main] Warning: target_class_name is None, skipping occlusion calc")
-            for name in hidden:
-                _set_render_visibility(world.stage, name, visible=True)
-            if fixture_hide_init:
-                fixture_mgr.make_visible()
-            spawner.spawn_remaining_objects()
-            for _ in range(8):
-                world.step(render=True)
-            current_occlusion_rates = None
-            return
-
-        occlusion_calc = OcclusionCalculator(camera_mgr, target_class)
-
-        # Enable semantic segmentation via CameraManager
-        camera_mgr.enable_semantic_segmentation()
-        for _ in range(5):
-            world.step(render=True)
-
-        # Capture baseline (multi-sample with renders between for noise robustness)
-        occlusion_calc.capture_baseline(
-            camera_mgr,
-            render_fn=lambda: world.step(render=True),
-            num_samples=5,
-        )
-
-        # Restore the hidden occluders so they DO count toward occlusion in Phase 2
-        for name in hidden:
-            _set_render_visibility(world.stage, name, visible=True)
-
-        # Show fixture if it was hidden during Phase 1
-        if fixture_hide_init:
-            fixture_mgr.make_visible()
-
-        # === Phase 2: spawn remaining objects ===
         spawner.spawn_remaining_objects()
-
-        # Match Phase-1 settle time (8 + 5 = 13) for annotator symmetry.
         for _ in range(13):
             world.step(render=True)
-
-        # Capture after occlusion (multi-sample with renders between)
-        occlusion_calc.capture_occluded(
-            camera_mgr,
-            render_fn=lambda: world.step(render=True),
-            num_samples=5,
-        )
-
-        current_occlusion_rates = occlusion_calc.get_occlusion_rates()
-        avg_rate = occlusion_calc.get_avg_occlusion_rate()
-        rounded_rates = {k: round(v, 3) for k, v in current_occlusion_rates.items()}
-        print(f"[Main] Occlusion calculation done! avg = {avg_rate:.3f}, per_cam = {rounded_rates}")
+        # Live occlusion is no longer computed here; save_demo records each
+        # demo's initial layout so it can be filled in offline.
+        current_occlusion_rates = None
 
     def log_demo_status():
         """Print the current demo count. Called after scene setup so it lands
@@ -430,12 +327,37 @@ def main():
     print(f"Mode: {mode_str}")
     print("Move : WASDQE | Rotate : Z/X T/G C/V")
     print("Gripper : K   | Reset  : R   | Save Fail / Eval Fail : N")
+    if not args.eval_mode:
+        print("Finish + compute occlusion : P  or  Ctrl+C")
     print("==========================================")
     log_demo_status()
 
     needs_reset = False
-    
+    finish_requested = False  # set by the P key OR Ctrl+C: end collection, then
+                              # run the offline occlusion pass while the app is alive.
+
+    # Intercept Ctrl+C so the operator's usual "collect then Ctrl+C" habit ends
+    # the session gracefully instead of hard-killing the process: the handler
+    # just raises a flag the loop checks, so we still reach the occlusion pass.
+    # Installed AFTER SimulationApp init so it overrides omni's own SIGINT
+    # handler. A SECOND Ctrl+C (during the occlusion pass) restores the default
+    # handler and aborts, so a wedged pass is still killable.
+    interrupt = {"stop": False}
+
+    def _on_sigint(signum, frame):
+        if not interrupt["stop"]:
+            interrupt["stop"] = True
+            print("\n[Main] Ctrl+C received — finishing session, will compute "
+                  "occlusion before exit (press Ctrl+C again to abort).")
+    signal.signal(signal.SIGINT, _on_sigint)
+
     while simulation_app.is_running():
+
+        # Ctrl+C (or the P key below) ends collection cleanly.
+        if interrupt["stop"]:
+            if not args.eval_mode:
+                finish_requested = True
+            break
         
         if world.is_playing():
             # Stop simulation -> Reset
@@ -467,8 +389,19 @@ def main():
                 if recorder is not None:
                     recorder.start_trial()
 
+            profiler.tick_frame()
+
             # Get input
-            delta_pos, delta_rot, gripper_cmd, reset_cmd, fail_cmd, is_any_action = input_mgr.get_command()
+            _t = profiler.start()
+            delta_pos, delta_rot, gripper_cmd, reset_cmd, fail_cmd, is_any_action, finish_cmd = input_mgr.get_command()
+            profiler.stop("input.get_command", _t)
+
+            # P key (collection only): end the session cleanly so the offline
+            # occlusion pass can run below while the sim is still alive.
+            if finish_cmd and not args.eval_mode:
+                print("[Main] Finish requested (P) — ending collection.")
+                finish_requested = True
+                break
 
             # Eval mode: advance per-trial counter (starts on first action)
             timed_out = stats.tick(is_any_action) if stats is not None else False
@@ -486,16 +419,22 @@ def main():
                 data_collector.recording = True
 
             # Apply control
+            _t = profiler.start()
             controller.apply_control(delta_pos, gripper_cmd, delta_rot)
+            profiler.stop("controller.apply_control", _t)
             # Update physics
+            _t = profiler.start()
             world.step(render=True)
+            profiler.stop("world.step(render)", _t)
 
             # Eval video: capture this frame while a trial is active
             if recorder is not None and stats is not None and stats.trial_active:
                 recorder.capture(camera_mgr.get_all_camera_data())
 
             if data_collector.recording:
+                _t = profiler.start()
                 data_collector.collect_frame(controller, delta_pos, delta_rot, gripper_cmd, spawner, camera_mgr, container_mgr, fixture_mgr)
+                profiler.stop("collect_frame(total)", _t)
                 # First frame just landed -> save a preview PNG so the user can
                 # eyeball the camera views and press N/R immediately if broken.
                 if len(data_collector.current_demo_data) == 1:
@@ -540,7 +479,9 @@ def main():
                     needs_reset = True
 
             # Check termination condition
+            _t = profiler.start()
             is_success, success_obj_name = termination_mgr.check_task_success()
+            profiler.stop("termination.check_success", _t)
             if not needs_reset and is_success:
                 container_info = container_mgr.get_container_info()
                 c_name = container_info.get("name", "container")
@@ -581,6 +522,27 @@ def main():
 
     if stats is not None:
         print(stats.summary())
+
+    # Collection finished via the P key or Ctrl+C: compute occlusion rates
+    # offline now, reusing the live managers (no Isaac Sim relaunch). Skipped if
+    # nothing was collected. Failures here never block the clean shutdown below.
+    if finish_requested and data_collector.enabled:
+        # Restore the default handler so a second Ctrl+C aborts a wedged pass.
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        demo_count = data_collector.get_demo_count()
+        if demo_count > 0:
+            print(f"[Main] Computing occlusion rates offline for {demo_count} demo(s)...")
+            try:
+                from core.occlusion_offline import run_occlusion_pass
+                run_occlusion_pass(
+                    data_collector.filepath, world, controller, camera_mgr,
+                    spawner, container_mgr, fixture_mgr,
+                )
+            except Exception as e:
+                print(f"[Main] Occlusion pass failed: {e}")
+        else:
+            print("[Main] No demos collected — skipping occlusion pass.")
+
     simulation_app.close()
 
 

@@ -4,3 +4,5 @@ __pycache__/
 *.rar
 *.mp4
 *.pt
+profile_logs/
+occlusion_logs/

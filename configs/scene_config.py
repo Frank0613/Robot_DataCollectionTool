@@ -40,9 +40,9 @@ DEFAULT_YAW_RANGE = 45.0    # degrees (half-range)
 # Per-point assignment. Set an object point's "file" to None (or container_pos's
 # "container" to None) to leave it empty.
 LAYOUT = {
-    "target_point": {"file": "black_mug.usd",   "radius": 0.02, "yaw_range": 45.0},
-    "point_right":  {"file": "marker.usd",      "radius": 0.02, "yaw_range": 45.0},
-    "point_left":   {"file": "red_bowl.usd",       "radius": 0.02, "yaw_range": 45.0},
+    "target_point": {"file": "gear.usd",   "radius": 0.02, "yaw_range": 45.0},
+    "point_right":  {"file": "cracker_box.usd",      "radius": 0.02, "yaw_range": 45.0},
+    "point_left":   {"file": "pudding_box.usd",       "radius": 0.02, "yaw_range": 45.0},
     "point_front":  {"file": "oil_tin.usd",  "radius": 0.02, "yaw_range": 45.0},
     "container_pos": {"container": "plate",       "radius": 0.02, "yaw_range": 30.0},
 }

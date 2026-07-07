@@ -270,7 +270,10 @@ class DataCollector:
 
             # --- Camera capture every frame ---
             if camera_manager:
+                from core.profiler import profiler
+                _t = profiler.start()
                 cam_data = camera_manager.get_all_camera_data()
+                profiler.stop("  get_all_camera_data (all cams)", _t)
                 frame_data.update(cam_data)
 
             # --- Knob state (only if active container has a knob spec) ---
@@ -350,6 +353,73 @@ class DataCollector:
         scene_group.attrs['objects'] = json.dumps(roles)
         print(f"[DataCollector] Initial scene layout recorded: {roles}")
 
+    def _write_demo_layout(self, demo_group, spawner):
+        """Record THIS demo's full initial layout so occlusion can be computed
+        OFFLINE later (see tools/compute_occlusion.py) from the exact starting
+        arrangement — the hot collection loop no longer computes it live.
+
+        For every background object, the target, the container and the fixture
+        we store the class name (USD stem) plus its spawn pose. Objects use the
+        reference-ROOT spawn pose (`spawn_root_pose`, same as the file-level
+        `initial_scene`): the offline pass re-references each USD at that pose
+        and re-settles with physics — the reproduction path add_reference_to_
+        stage sets the root, not the inner rigid body, so its post-settle
+        rigid-body pose would not round-trip. Container/fixture are static, so
+        their get_state root_pose is used directly. Unlike `initial_scene`
+        (first demo only, for eval replay) this is written for EVERY demo
+        because each demo randomizes its layout.
+        """
+        if self.initial_state_snapshot is None:
+            return
+
+        layout = demo_group.create_group('initial_layout')
+        snapshot_objs = self.initial_state_snapshot.get("objects", {})
+        roles = {}  # role -> class name, e.g. {"target": "red_cube", "point_front": "apple"}
+
+        def _pose(obj_name):
+            # Reference-root spawn pose so re-referencing + re-settling round
+            # trips; fall back to the rigid-body pose only if it's unavailable.
+            info = snapshot_objs[obj_name]
+            pose = info.get("spawn_root_pose")
+            if pose is None:
+                pose = info["root_pose"]
+            return np.asarray(pose, dtype=np.float32)
+
+        # Background objects, keyed by their spawn point.
+        bg_map = self._get_spawner_bg_map(spawner)
+        for point_name, class_name in bg_map.items():
+            obj_name = f"spawned_obj_{point_name}"
+            if obj_name in snapshot_objs:
+                roles[point_name] = class_name
+                layout.create_dataset(f"{point_name}/root_pose", data=_pose(obj_name))
+
+        # Target object.
+        target_class = spawner.get_target_class_name()
+        target_obj_name = spawner.target_object
+        if target_class is not None and target_obj_name in snapshot_objs:
+            roles["target"] = target_class
+            layout.create_dataset("target/root_pose", data=_pose(target_obj_name))
+
+        # Container (post-settle pose; usually static).
+        container_state = self.initial_state_snapshot.get("container")
+        if container_state is not None:
+            roles["container"] = container_state["name"]
+            layout.create_dataset(
+                "container/root_pose",
+                data=np.asarray(container_state["root_pose"], dtype=np.float32),
+            )
+
+        # Support fixture (e.g. the box/stool the target rests on).
+        fixture_state = self.initial_state_snapshot.get("fixture")
+        if fixture_state is not None:
+            roles["fixture"] = fixture_state["name"]
+            layout.create_dataset(
+                "fixture/root_pose",
+                data=np.asarray(fixture_state["root_pose"], dtype=np.float32),
+            )
+
+        layout.attrs['objects'] = json.dumps(roles)
+
     def save_demo(self, controller, spawner, success_obj_name,
                   container_name="container", success=True,
                   occlusion_rates=None, fixture_name=None, task_profile=None):
@@ -403,6 +473,10 @@ class DataCollector:
             # so evaluation can reproduce the exact starting configuration.
             if 'initial_scene' not in root:
                 self._write_initial_scene(root, spawner)
+
+            # Record THIS demo's full initial layout (all objects + container +
+            # fixture) so occlusion can be computed offline afterwards.
+            self._write_demo_layout(demo_group, spawner)
 
             # --- Occlusion Rate Attribute ---
             if occlusion_rates is not None:

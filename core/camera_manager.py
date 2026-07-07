@@ -94,10 +94,13 @@ class CameraManager:
         an occasional glitch never writes a black frame into the dataset
         (which would also misalign the per-frame array lengths).
         """
+        from core.profiler import profiler
         data = {}
         for name, sensors in self.cameras.items():
             if "rgb" in sensors:
+                _t = profiler.start()
                 rgba = sensors["rgb"].get_rgba()
+                profiler.stop("  cam.get_rgba (per-cam)", _t)
                 rgb_ok = rgba is not None and rgba.size > 0 and rgba[:, :, :3].any()
                 if rgb_ok:
                     rgb = rgba[:, :, :3].astype(np.uint8)
@@ -111,7 +114,9 @@ class CameraManager:
                     print(f"[CameraManager] {name} RGB invalid and no cached frame")
 
             if "depth" in sensors:
+                _t = profiler.start()
                 depth_raw = sensors["depth"].get_depth()
+                profiler.stop("  cam.get_depth (per-cam)", _t)
                 if depth_raw is not None:
                     depth_processed = np.nan_to_num(depth_raw, nan=0.0, posinf=10.0, neginf=0.0)
                     depth_clipped = np.clip(depth_processed, 0, 10.0)
